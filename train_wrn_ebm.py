@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from numpy.core.numeric import full
+from numpy.lib.arraysetops import isin
 import utils
 import torch as t, torch.nn as nn, torch.nn.functional as tnnF, torch.distributions as tdist
 from torch.utils.data import DataLoader, Dataset
@@ -29,9 +31,11 @@ from tqdm import tqdm
 t.backends.cudnn.benchmark = True
 t.backends.cudnn.enabled = True
 seed = 1
-im_sz = 32
-n_ch = 3
+# im_sz = 32
+# n_ch = 3
+n_gene = 5000
 
+import pickle as pkl
 
 
 class DataSubset(Dataset):
@@ -104,7 +108,7 @@ def grad_vals(m):
 
 
 def init_random(args, bs):
-    return t.FloatTensor(bs, n_ch, im_sz, im_sz).uniform_(-1, 1)
+    return t.FloatTensor(bs, n_gene).uniform_(-1, 1)
 
 
 def get_model_and_buffer(args, device, sample_q):
@@ -125,7 +129,27 @@ def get_model_and_buffer(args, device, sample_q):
     return f, replay_buffer
 
 
+class SingleCellDataset(Dataset):
+    """
+    Create torch dataset from anndata
+    """
+    def __init__(self, adata):
+        super(SingleCellDataset, self).__init__()
+        self.data = adata.X
+        self.dim = self.data.shape[1]
+        self.gene = adata.var["n_counts"].index.values
+        self.barcode = adata.obs["bulk_labels"].index.values
+        self.label = np.array(adata.obs["int_label"].values)
+
+    def __getitem__(self, index):
+        return self.data[index], self.label[index]
+
+    def __len__(self):
+        return len(self.data)
+
+
 def get_data(args):
+    """
     if args.dataset == "svhn":
         transform_train = tr.Compose(
             [tr.Pad(4, padding_mode="reflect"),
@@ -156,9 +180,13 @@ def get_data(args):
         else:
             return tv.datasets.SVHN(root=args.data_root, transform=transform, download=True,
                                     split="train" if train else "test")
+    """
 
     # get all training inds
-    full_train = dataset_fn(True, transform_train)
+    # full_train = dataset_fn(True, transform_train)
+    with open(args.dataset, "rb") as f:
+        db = pkl.load(f)
+    full_train = SingleCellDataset(db)
     all_inds = list(range(len(full_train)))
     # set seed
     np.random.seed(1234)
@@ -166,13 +194,14 @@ def get_data(args):
     np.random.shuffle(all_inds)
     # seperate out validation set
     if args.n_valid is not None:
-        valid_inds, train_inds = all_inds[:args.n_valid], all_inds[args.n_valid:]
+        test_inds, valid_inds, train_inds = all_inds[:args.n_test], all_inds[args.n_test:args.n_valid+args.n_test], all_inds[args.n_valid+args.n_test:]
     else:
-        valid_inds, train_inds = [], all_inds
+        test_inds, valid_inds, train_inds = all_inds[:args.n_test], [], all_inds[args.n_test:]
     train_inds = np.array(train_inds)
     train_labeled_inds = []
     other_inds = []
     train_labels = np.array([full_train[ind][1] for ind in train_inds])
+
     if args.labels_per_class > 0:
         for i in range(args.n_classes):
             print(i)
@@ -181,22 +210,19 @@ def get_data(args):
     else:
         train_labeled_inds = train_inds
 
-    dset_train = DataSubset(
-        dataset_fn(True, transform_train),
-        inds=train_inds)
-    dset_train_labeled = DataSubset(
-        dataset_fn(True, transform_train),
-        inds=train_labeled_inds)
-    dset_valid = DataSubset(
-        dataset_fn(True, transform_test),
-        inds=valid_inds)
+    dset_train = DataSubset(SingleCellDataset(db), inds=train_inds)
+    dset_valid = DataSubset(SingleCellDataset(db), inds=valid_inds)
+    dset_test = DataSubset(SingleCellDataset(db), inds=test_inds)
+    dset_train_labeled = DataSubset(SingleCellDataset(db), inds=train_labeled_inds)
+
     dload_train = DataLoader(dset_train, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
     dload_train_labeled = DataLoader(dset_train_labeled, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
     dload_train_labeled = cycle(dload_train_labeled)
-    dset_test = dataset_fn(False, transform_test)
-    dload_valid = DataLoader(dset_valid, batch_size=100, shuffle=False, num_workers=4, drop_last=False)
-    dload_test = DataLoader(dset_test, batch_size=100, shuffle=False, num_workers=4, drop_last=False)
-    return dload_train, dload_train_labeled, dload_valid,dload_test
+
+    dload_test = DataLoader(dset_test, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
+    dload_valid = DataLoader(dset_valid, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
+
+    return dload_train, dload_train_labeled, dload_valid, dload_test
 
 
 def get_sample_q(args, device):
@@ -329,7 +355,7 @@ def main(args):
                                                                                                    fp - fq))
                 L += args.p_x_weight * l_p_x
 
-            if args.p_y_given_x_weight > 0:  # maximize log p(y | x)
+            if args.p_y_given_x_weight > 0:  # maximize log p(y | x) by xeloss
                 logits = f.classify(x_lab)
                 l_p_y_given_x = nn.CrossEntropyLoss()(logits, y_lab)
                 if cur_iter % args.print_every == 0:
@@ -361,6 +387,8 @@ def main(args):
             optim.step()
             cur_iter += 1
 
+            # no plot needed
+            """
             if cur_iter % 100 == 0:
                 if args.plot_uncond:
                     if args.class_cond_p_x_sample:
@@ -374,6 +402,7 @@ def main(args):
                     y = t.arange(0, args.n_classes)[None].repeat(args.n_classes, 1).transpose(1, 0).contiguous().view(-1).to(device)
                     x_q_y = sample_q(f, replay_buffer, y=y)
                     plot('{}/x_q_y{}_{:>06d}.png'.format(args.save_dir, epoch, i), x_q_y)
+            """
 
         if epoch % args.ckpt_every == 0:
             checkpoint(f, replay_buffer, f'ckpt_{epoch}.pt', args, device)
@@ -398,7 +427,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("Energy Based Models and Shit")
-    parser.add_argument("--dataset", type=str, default="cifar10", choices=["cifar10", "svhn", "cifar100"])
+    parser.add_argument("--dataset", type=str, default="./pbmc_filtered.pkl")
     parser.add_argument("--data_root", type=str, default="../data")
     # optimization
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -449,6 +478,7 @@ if __name__ == "__main__":
     parser.add_argument("--plot_cond", action="store_true", help="If set, save class-conditional samples")
     parser.add_argument("--plot_uncond", action="store_true", help="If set, save unconditional samples")
     parser.add_argument("--n_valid", type=int, default=5000)
+    parser.add_argument("--n_test", type=int, default=5000)
 
     args = parser.parse_args()
     args.n_classes = 100 if args.dataset == "cifar100" else 10
