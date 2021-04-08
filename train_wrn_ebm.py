@@ -24,7 +24,8 @@ import sys
 import argparse
 #import ipdb
 import numpy as np
-import wideresnet
+#import wideresnet
+import clamsnet
 import json
 # Sampling
 from tqdm import tqdm
@@ -34,9 +35,9 @@ seed = 1
 # im_sz = 32
 # n_ch = 3
 n_gene = 5000
+os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
 import pickle as pkl
-
 
 class DataSubset(Dataset):
     def __init__(self, base_dataset, inds=None, size=-1):
@@ -56,7 +57,8 @@ class DataSubset(Dataset):
 class F(nn.Module):
     def __init__(self, depth=28, width=2, norm=None, dropout_rate=0.0, n_classes=10):
         super(F, self).__init__()
-        self.f = wideresnet.Wide_ResNet(depth, width, norm=norm, dropout_rate=dropout_rate)
+        # self.f = wideresnet.Wide_ResNet(depth, width, norm=norm, dropout_rate=dropout_rate)
+        self.f = clamsnet.Clams_Net()
         self.energy_output = nn.Linear(self.f.last_dim, 1)
         self.class_output = nn.Linear(self.f.last_dim, n_classes)
 
@@ -237,7 +239,7 @@ def get_sample_q(args, device):
             assert not args.uncond, "Can't drawn conditional samples without giving me y"
         buffer_samples = replay_buffer[inds]
         random_samples = init_random(args, bs)
-        choose_random = (t.rand(bs) < args.reinit_freq).float()[:, None, None, None]
+        choose_random = (t.rand(bs) < args.reinit_freq).float()[:, None]
         samples = choose_random * random_samples + (1 - choose_random) * buffer_samples
         return samples.to(device), inds
 
@@ -351,7 +353,7 @@ def main(args):
 
                 l_p_x = -(fp - fq)
                 if cur_iter % args.print_every == 0:
-                    print('P(x) | {}:{:>d} f(x_p_d)={:>14.9f} f(x_q)={:>14.9f} d={:>14.9f}'.format(epoch, i, fp, fq,
+                    print('P(x) | {}:{:>d} f(x_p_d)={:>14.9f} f(x_q)={:>14.9f} d={:>14.9f}'.format(epoch + 1, i + 1, fp, fq,
                                                                                                    fp - fq))
                 L += args.p_x_weight * l_p_x
 
@@ -360,8 +362,8 @@ def main(args):
                 l_p_y_given_x = nn.CrossEntropyLoss()(logits, y_lab)
                 if cur_iter % args.print_every == 0:
                     acc = (logits.max(1)[1] == y_lab).float().mean()
-                    print('P(y|x) {}:{:>d} loss={:>14.9f}, acc={:>14.9f}'.format(epoch,
-                                                                                 cur_iter,
+                    print('P(y|x) {}:{:>d} loss={:>14.9f}, acc={:>14.9f}'.format(epoch + 1,
+                                                                                 cur_iter + 1,
                                                                                  l_p_y_given_x.item(),
                                                                                  acc.item()))
                 L += args.p_y_given_x_weight * l_p_y_given_x
@@ -372,7 +374,7 @@ def main(args):
                 fp, fq = f(x_lab, y_lab).mean(), f(x_q_lab, y_lab).mean()
                 l_p_x_y = -(fp - fq)
                 if cur_iter % args.print_every == 0:
-                    print('P(x, y) | {}:{:>d} f(x_p_d)={:>14.9f} f(x_q)={:>14.9f} d={:>14.9f}'.format(epoch, i, fp, fq,
+                    print('P(x, y) | {}:{:>d} f(x_p_d)={:>14.9f} f(x_q)={:>14.9f} d={:>14.9f}'.format(epoch + 1, i + 1, fp, fq,
                                                                                                       fp - fq))
 
                 L += args.p_x_y_weight * l_p_x_y
@@ -464,7 +466,7 @@ if __name__ == "__main__":
     parser.add_argument("--class_cond_p_x_sample", action="store_true",
                         help="If set we sample from p(y)p(x|y), othewise sample from p(x),"
                              "Sample quality higher if set, but classification accuracy better if not.")
-    parser.add_argument("--buffer_size", type=int, default=10000)
+    parser.add_argument("--buffer_size", type=int, default=11000)
     parser.add_argument("--reinit_freq", type=float, default=.05)
     parser.add_argument("--sgld_lr", type=float, default=1.0)
     parser.add_argument("--sgld_std", type=float, default=1e-2)
@@ -479,7 +481,8 @@ if __name__ == "__main__":
     parser.add_argument("--plot_uncond", action="store_true", help="If set, save unconditional samples")
     parser.add_argument("--n_valid", type=int, default=5000)
     parser.add_argument("--n_test", type=int, default=5000)
+    parser.add_argument("--n_classes", type=int, default=11)
 
     args = parser.parse_args()
-    args.n_classes = 100 if args.dataset == "cifar100" else 10
+    
     main(args)
