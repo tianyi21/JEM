@@ -266,15 +266,35 @@ def get_sample_q(args, device):
     return sample_q
 
 
-def eval_classification(f, dload, device):
+def eval_classification(f, dload, device, set, epoch=0, cm_normalize="pred"):
     corrects, losses = [], []
-    for x_p_d, y_p_d in dload:
+    cm_idx = np.random.randint(0, len(dload))
+    for i, (x_p_d, y_p_d) in enumerate(dload):
         x_p_d, y_p_d = x_p_d.to(device), y_p_d.to(device)
         logits = f.classify(x_p_d)
         loss = nn.CrossEntropyLoss(reduce=False)(logits, y_p_d).cpu().numpy()
         losses.extend(loss)
         correct = (logits.max(1)[1] == y_p_d).float().cpu().numpy()
         corrects.extend(correct)
+        # plot confusion matrix
+        if set == "test" and i == cm_idx:
+            label_raw = np.array(['CD14+', 'CD19+', 'CD34+', 'CD4+',
+            'CD4+/CD25', 'CD4+/CD45RA+/CD25-',
+            'CD4+/CD45RO+', 'CD56+', 'CD8+',
+            'CD8+/CD45RA+', 'Dendritic'])
+            from sklearn.metrics import confusion_matrix
+            import matplotlib.pyplot as plt
+            cm = confusion_matrix(y_p_d, logits.max(1)[1], normalize=cm_normalize)
+            plt.imshow(cm)
+            batch_label_uniq = sorted(np.unique(y_p_d.cpu().numpy()))
+            pred_class_uniq = sorted(np.unique(logits.max(1)[1]))
+            plot_label = sorted(np.unique(np.concatenate((batch_label_uniq, pred_class_uniq))))
+            plt.xticks(range(len(plot_label)), label_raw[plot_label], rotation=45, horizontalalignment="right")
+            plt.yticks(range(len(plot_label)), label_raw[plot_label])
+            if not os.path.exists("./img"):
+                os.mkdir("./img")
+            plt.savefig("./img/cm_{}.jpg".format(epoch + 1))
+
     loss = np.mean(losses)
     correct = np.mean(corrects)
     return correct, loss
@@ -413,15 +433,15 @@ def main(args):
             f.eval()
             with t.no_grad():
                 # validation set
-                correct, loss = eval_classification(f, dload_valid, device)
-                print("Epoch {}: Valid Loss {}, Valid Acc {}".format(epoch, loss, correct))
+                correct, loss = eval_classification(f, dload_valid, device, "dummy")
+                print("Epoch {}: Valid Loss {}, Valid Acc {}".format(epoch + 1, loss, correct))
                 if correct > best_valid_acc:
                     best_valid_acc = correct
                     print("Best Valid!: {}".format(correct))
                     checkpoint(f, replay_buffer, "best_valid_ckpt.pt", args, device)
                 # test set
-                correct, loss = eval_classification(f, dload_test, device)
-                print("Epoch {}: Test Loss {}, Test Acc {}".format(epoch, loss, correct))
+                correct, loss = eval_classification(f, dload_test, device, "test", epoch)
+                print("Epoch {}: Test Loss {}, Test Acc {}".format(epoch + 1, loss, correct))
             f.train()
         checkpoint(f, replay_buffer, "last_ckpt.pt", args, device)
 
