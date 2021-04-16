@@ -286,7 +286,7 @@ def logp_hist(f, args, device):
         this_scores.extend(scores.numpy())
 
     # for name, scores in score_dict.items():
-    plt.hist(scores, label=set, bins=100, normed=True, alpha=.5)
+    plt.hist(scores, label=args.logpset, bins=100, normed=True, alpha=.5)
     plt.legend()
     plt.savefig("./img/logp_hist.pdf")
 
