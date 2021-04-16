@@ -21,7 +21,7 @@ import os
 import sys
 import argparse
 import numpy as np
-import wideresnet
+import clamsnet
 import pdb
 
 from tqdm import tqdm
@@ -30,9 +30,26 @@ from tqdm import tqdm
 t.backends.cudnn.benchmark = True
 t.backends.cudnn.enabled = True
 seed = 1
-im_sz = 32
-n_ch = 3
-n_classes = 10
+n_gene = 5000
+
+
+class SingleCellDataset(Dataset):
+    """
+    Create torch dataset from anndata
+    """
+    def __init__(self, adata):
+        super(SingleCellDataset, self).__init__()
+        self.data = adata.X
+        self.dim = self.data.shape[1]
+        self.gene = adata.var["n_counts"].index.values
+        self.barcode = adata.obs["bulk_labels"].index.values
+        self.label = np.array(adata.obs["int_label"].values)
+
+    def __getitem__(self, index):
+        return self.data[index], self.label[index]
+
+    def __len__(self):
+        return len(self.data)
 
 
 class DataSubset(Dataset):
@@ -53,7 +70,8 @@ class DataSubset(Dataset):
 class F(nn.Module):
     def __init__(self, depth=28, width=2, norm=None):
         super(F, self).__init__()
-        self.f = wideresnet.Wide_ResNet(depth, width, norm=norm)
+        # self.f = wideresnet.Wide_ResNet(depth, width, norm=norm)
+        self.f = clamsnet.Clams_Net()
         self.energy_output = nn.Linear(self.f.last_dim, 1)
         self.class_output = nn.Linear(self.f.last_dim, 10)
 
@@ -85,7 +103,7 @@ def cycle(loader):
 
 
 def init_random(bs):
-    return t.FloatTensor(bs, 3, 32, 32).uniform_(-1, 1)
+    return t.FloatTensor(bs, n_gene).uniform_(-1, 1)
 
 
 def sample_p_0(device, replay_buffer, bs, y=None):
@@ -99,7 +117,7 @@ def sample_p_0(device, replay_buffer, bs, y=None):
         assert not args.uncond, "Can't drawn conditional samples without giving me y"
     buffer_samples = replay_buffer[inds]
     random_samples = init_random(bs)
-    choose_random = (t.rand(bs) < args.reinit_freq).float()[:, None, None, None]
+    choose_random = (t.rand(bs) < args.reinit_freq).float()[:, None]
     samples = choose_random * random_samples + (1 - choose_random) * buffer_samples
     return samples.to(device), inds
 
@@ -128,20 +146,24 @@ def sample_q(args, device, f, replay_buffer, y=None):
 
 def uncond_samples(f, args, device, save=True):
     sqrt = lambda x: int(t.sqrt(t.Tensor([x])))
-    plot = lambda p, x: tv.utils.save_image(t.clamp(x, -1, 1), p, normalize=True, nrow=sqrt(x.size(0)))
+    # plot = lambda p, x: tv.utils.save_image(t.clamp(x, -1, 1), p, normalize=True, nrow=sqrt(x.size(0)))
 
-    replay_buffer = t.FloatTensor(args.buffer_size, 3, 32, 32).uniform_(-1, 1)
+    replay_buffer = t.FloatTensor(args.buffer_size, n_gene).uniform_(-1, 1)
+    tmp = []
     for i in range(args.n_sample_steps):
         samples = sample_q(args, device, f, replay_buffer)
-        if i % args.print_every == 0 and save:
-            plot('{}/samples_{}.png'.format(args.save_dir, i), samples)
+        #if i % args.print_every == 0 and save:
+        #    plot('{}/samples_{}.png'.format(args.save_dir, i), samples)
+        tmp.append(samples)
         print(i)
+    utils.makedirs("./samples")
+    utils.pkl_io("w", "./samples/uncond.pkl", tmp)
     return replay_buffer
 
 
 def cond_samples(f, replay_buffer, args, device, fresh=False):
     sqrt = lambda x: int(t.sqrt(t.Tensor([x])))
-    plot = lambda p, x: tv.utils.save_image(t.clamp(x, -1, 1), p, normalize=True, nrow=sqrt(x.size(0)))
+    # plot = lambda p, x: tv.utils.save_image(t.clamp(x, -1, 1), p, normalize=True, nrow=sqrt(x.size(0)))
 
     if fresh:
         replay_buffer = uncond_samples(f, args, device, save=False)
@@ -155,15 +177,19 @@ def cond_samples(f, replay_buffer, args, device, fresh=False):
     all_y = t.cat(all_y, 0)
     each_class = [replay_buffer[all_y == l] for l in range(10)]
     print([len(c) for c in each_class])
+    tmp = []
     for i in range(100):
         this_im = []
         for l in range(10):
             this_l = each_class[l][i * 10: (i + 1) * 10]
             this_im.append(this_l)
         this_im = t.cat(this_im, 0)
-        if this_im.size(0) > 0:
-            plot('{}/samples_{}.png'.format(args.save_dir, i), this_im)
+        tmp.append(this_im)
+        # if this_im.size(0) > 0:
+        #    plot('{}/samples_{}.png'.format(args.save_dir, i), this_im)
         print(i)
+    utils.makedirs("./samples")
+    utils.pkl_io("w", "./samples/cond.pkl", tmp)
 
 
 def logp_hist(f, args, device):
@@ -209,6 +235,7 @@ def logp_hist(f, args, device):
             return -norm.detach().cpu()
         else:
             return f.classify(x).max(1)[0].detach().cpu()
+    """
     transform_test = tr.Compose(
         [tr.ToTensor(),
          tr.Normalize((.5, .5, .5), (.5, .5, .5)),
@@ -224,7 +251,6 @@ def logp_hist(f, args, device):
                                                                 tr.Normalize((.5, .5, .5), (.5, .5, .5)),
                                                                 lambda x: x + args.sigma * t.randn_like(x)]))
     }
-
     score_dict = {}
     for dataset_name in args.datasets:
         print(dataset_name)
@@ -237,11 +263,32 @@ def logp_hist(f, args, device):
             print(scores.mean())
             this_scores.extend(scores.numpy())
         score_dict[dataset_name] = this_scores
+    """
+    if not os.path.isfile("./experiments/ttv_idx.pkl"):
+        raise FileNotFoundError("set split not found.")
+    ttv_dict = utils.pkl_io("r", "./experiments/ttv_idx.pkl")
+    train_inds, test_inds, valid_inds = ttv_dict.values()
+    db = utils.pkl_io("r", args.dataset)
+    if args.logpset == "train":
+        dataset = DataSubset(SingleCellDataset(db), inds=train_inds)
+    elif args.logpset == "test":
+        dataset = DataSubset(SingleCellDataset(db), inds=test_inds)
+    elif args.logpset == "valid":
+        dataset = DataSubset(SingleCellDataset(db), inds=valid_inds)
+    else:
+        raise ValueError
+    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=False)
+    this_scores = []
+    for x, _ in dataloader:
+        x = x.to(device)
+        scores = score_fn(x)
+        print(scores.mean())
+        this_scores.extend(scores.numpy())
 
-    for name, scores in score_dict.items():
-        plt.hist(scores, label=name, bins=100, normed=True, alpha=.5)
+    # for name, scores in score_dict.items():
+    plt.hist(scores, label=set, bins=100, normed=True, alpha=.5)
     plt.legend()
-    plt.savefig(args.save_dir + "/fig.pdf")
+    plt.savefig("./img/logp_hist.pdf")
 
 
 def OODAUC(f, args, device):
@@ -252,16 +299,14 @@ def OODAUC(f, args, device):
         f_prime = t.autograd.grad(f(x_k).sum(), [x_k], retain_graph=True)[0]
         grad = f_prime.view(x.size(0), -1)
         return grad.norm(p=2, dim=1)
-
+    """
     transform_test = tr.Compose(
         [tr.ToTensor(),
          tr.Normalize((.5, .5, .5), (.5, .5, .5)),
          lambda x: x + args.sigma * t.randn_like(x)]
     )
-
     dset_real = tv.datasets.CIFAR10(root="../data", transform=transform_test, download=True, train=False)
     dload_real = DataLoader(dset_real, batch_size=100, shuffle=False, num_workers=4, drop_last=False)
-
     if args.ood_dataset == "svhn":
         dset_fake = tv.datasets.SVHN(root="../data", transform=transform_test, download=True, split="test")
     elif args.ood_dataset == "cifar_100":
@@ -274,8 +319,33 @@ def OODAUC(f, args, device):
                                                        lambda x: x + args.sigma * t.randn_like(x)]))
     else:
         dset_fake = tv.datasets.CIFAR10(root="../data", transform=transform_test, download=True, train=False)
+    """
+    if not os.path.isfile("./experiments/ttv_idx.pkl"):
+        raise FileNotFoundError("set split not found.")
+    ttv_dict = utils.pkl_io("r", "./experiments/ttv_idx.pkl")
+    train_inds, test_inds, valid_inds = ttv_dict.values()
+    db = utils.pkl_io("r", args.dataset)
 
-    dload_fake = DataLoader(dset_fake, batch_size=100, shuffle=True, num_workers=4, drop_last=False)
+    if args.rset == "train":
+        dset_real = DataSubset(SingleCellDataset(db), inds=train_inds)
+    elif args.rset == "test":
+        dset_real = DataSubset(SingleCellDataset(db), inds=test_inds)
+    elif args.rset == "valid":
+        dset_real = DataSubset(SingleCellDataset(db), inds=valid_inds)
+    else:
+        raise ValueError
+
+    if args.fset == "train":
+        dset_fake = DataSubset(SingleCellDataset(db), inds=train_inds)
+    elif args.fset == "test":
+        dset_fake = DataSubset(SingleCellDataset(db), inds=test_inds)
+    elif args.fset == "valid":
+        dset_fake = DataSubset(SingleCellDataset(db), inds=valid_inds)
+    else:
+        raise ValueError
+
+    dload_real = DataLoader(dset_real, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=False)
+    dload_fake = DataLoader(dset_fake, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=False)
     print(len(dload_real), len(dload_fake))
     real_scores = []
     print("Real scores...")
@@ -295,6 +365,7 @@ def OODAUC(f, args, device):
         print(scores.mean())
     fake_scores = []
     print("Fake scores...")
+    """
     if args.ood_dataset == "cifar_interp":
         last_batch = None
         for i, (x, _) in enumerate(dload_fake):
@@ -306,11 +377,12 @@ def OODAUC(f, args, device):
                 print(scores.mean())
             last_batch = x
     else:
-        for i, (x, _) in enumerate(dload_fake):
-            x = x.to(device)
-            scores = score_fn(x)
-            fake_scores.append(scores.numpy())
-            print(scores.mean())
+    """
+    for i, (x, _) in enumerate(dload_fake):
+        x = x.to(device)
+        scores = score_fn(x)
+        fake_scores.append(scores.numpy())
+        print(scores.mean())
     real_scores = np.concatenate(real_scores)
     fake_scores = np.concatenate(fake_scores)
     real_labels = np.ones_like(real_scores)
@@ -323,12 +395,14 @@ def OODAUC(f, args, device):
 
 
 def test_clf(f, args, device):
+    """
     transform_test = tr.Compose(
         [tr.ToTensor(),
          tr.Normalize((.5, .5, .5), (.5, .5, .5)),
          lambda x: x + t.randn_like(x) * args.sigma]
     )
-
+    """
+    
     def sample(x, n_steps=args.n_steps):
         x_k = t.autograd.Variable(x.clone(), requires_grad=True)
         # sgld
@@ -337,7 +411,8 @@ def test_clf(f, args, device):
             x_k.data += f_prime + 1e-2 * t.randn_like(x_k)
         final_samples = x_k.detach()
         return final_samples
-
+    
+    """
     if args.dataset == "cifar_train":
         dset = tv.datasets.CIFAR10(root="../data", transform=transform_test, download=True, train=True)
     elif args.dataset == "cifar_test":
@@ -348,6 +423,24 @@ def test_clf(f, args, device):
         dset = tv.datasets.SVHN(root="../data", transform=transform_test, download=True, split="test")
 
     dload = DataLoader(dset, batch_size=100, shuffle=False, num_workers=4, drop_last=False)
+    """
+
+    if not os.path.isfile("./experiments/ttv_idx.pkl"):
+        raise FileNotFoundError("set split not found.")
+    ttv_dict = utils.pkl_io("r", "./experiments/ttv_idx.pkl")
+    train_inds, test_inds, valid_inds = ttv_dict.values()
+    db = utils.pkl_io("r", args.dataset)
+
+    if args.clfset == "train":
+        dset= DataSubset(SingleCellDataset(db), inds=train_inds)
+    elif args.clfset == "test":
+        dset = DataSubset(SingleCellDataset(db), inds=test_inds)
+    elif args.clfset == "valid":
+        dset = DataSubset(SingleCellDataset(db), inds=valid_inds)
+    else:
+        raise ValueError
+
+    dload = DataLoader(dset, batch_size=args.batch_size, shuffle=False, num_workers=4, drop_last=False)
 
     corrects, losses, pys, preds = [], [], [], []
     for x_p_d, y_p_d in tqdm(dload):
@@ -414,14 +507,15 @@ if __name__ == "__main__":
                         choices=["uncond_samples", "cond_samples", "logp_hist", "OOD", "test_clf"])
     parser.add_argument("--score_fn", default="px", type=str,
                         choices=["px", "py", "pxgrad"], help="For OODAUC, chooses what score function we use.")
-    parser.add_argument("--ood_dataset", default="svhn", type=str,
-                        choices=["svhn", "cifar_interp", "cifar_100", "celeba"],
-                        help="Chooses which dataset to compare against for OOD")
-    parser.add_argument("--dataset", default="cifar_test", type=str,
-                        choices=["cifar_train", "cifar_test", "svhn_test", "svhn_train"],
-                        help="Dataset to use when running test_clf for classification accuracy")
-    parser.add_argument("--datasets", nargs="+", type=str, default=[],
-                        help="The datasets you wanna use to generate a log p(x) histogram")
+    parser.add_argument("--dataset", type=str) # path to anndata
+
+    parser.add_argument("--rset", type=str, choices=["train", "test", "valid"], help="OODAUC real dateset")
+    parser.add_argument("--fset", type=str, choices=["train", "test", "valid"], help="OODAUC fake dataset")
+    parser.add_argument("--clfset", type=str, choices=["train", "test", "valid"], help="test_clf dataset")
+    parser.add_argument("--logpset", type=str, choices=["train", "test", "valid"], help="test_clf dataset")
+    
+    #parser.add_argument("--datasets", nargs="+", type=str, default=[],
+    #                    help="The datasets you wanna use to generate a log p(x) histogram")
     # optimization
     parser.add_argument("--batch_size", type=int, default=64)
     # regularization
@@ -446,6 +540,8 @@ if __name__ == "__main__":
     parser.add_argument("--fresh_samples", action="store_true",
                         help="If set, then we generate a new replay buffer from scratch for conditional sampling,"
                              "Will be much slower.")
+
+    parser.add_argument("--n_classes", type=int, default=11)
 
 
     args = parser.parse_args()
