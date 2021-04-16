@@ -16,6 +16,7 @@
 import os
 import logging
 import torch
+import pickle as pkl
 
 
 def makedirs(dirname):
@@ -109,3 +110,14 @@ def save_checkpoint(state, save, epoch):
 
 def isnan(tensor):
     return (tensor != tensor)
+
+
+def pkl_io(mode, path, *args):
+    if mode == "w":
+        with open(path, "wb") as f:
+            print("O: written to {}".format(path))
+            pkl.dump(args[0], f)
+    elif mode == "r":
+        with open(path, "rb") as f:
+            print("I: read from {}".format(path))
+            return pkl.load(f)
