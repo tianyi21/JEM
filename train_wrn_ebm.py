@@ -29,15 +29,44 @@ import clamsnet
 import json
 # Sampling
 from tqdm import tqdm
+import time
+
+from sklearn.metrics import confusion_matrix
+import matplotlib.pyplot as plt
+
 t.backends.cudnn.benchmark = True
 t.backends.cudnn.enabled = True
 seed = 1
-# im_sz = 32
-# n_ch = 3
 n_gene = 5000
+
+# supress openmp error
 os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
-import pickle as pkl
+LABEL_RAW = np.array(['CD14+', 'CD19+', 'CD34+', 'CD4+',
+            'CD4+/CD25', 'CD4+/CD45RA+/CD25-',
+            'CD4+/CD45RO+', 'CD56+', 'CD8+',
+            'CD8+/CD45RA+', 'Dendritic'])
+CACHE_DATA = True
+
+
+class SingleCellDataset(Dataset):
+    """
+    Create torch dataset from anndata
+    """
+    def __init__(self, adata):
+        super(SingleCellDataset, self).__init__()
+        self.data = adata.X
+        self.dim = self.data.shape[1]
+        self.gene = adata.var["n_counts"].index.values
+        self.barcode = adata.obs["bulk_labels"].index.values
+        self.label = np.array(adata.obs["int_label"].values)
+
+    def __getitem__(self, index):
+        return self.data[index], self.label[index]
+
+    def __len__(self):
+        return len(self.data)
+
 
 class DataSubset(Dataset):
     def __init__(self, base_dataset, inds=None, size=-1):
@@ -131,25 +160,6 @@ def get_model_and_buffer(args, device, sample_q):
     return f, replay_buffer
 
 
-class SingleCellDataset(Dataset):
-    """
-    Create torch dataset from anndata
-    """
-    def __init__(self, adata):
-        super(SingleCellDataset, self).__init__()
-        self.data = adata.X
-        self.dim = self.data.shape[1]
-        self.gene = adata.var["n_counts"].index.values
-        self.barcode = adata.obs["bulk_labels"].index.values
-        self.label = np.array(adata.obs["int_label"].values)
-
-    def __getitem__(self, index):
-        return self.data[index], self.label[index]
-
-    def __len__(self):
-        return len(self.data)
-
-
 def get_data(args):
     """
     if args.dataset == "svhn":
@@ -186,8 +196,7 @@ def get_data(args):
 
     # get all training inds
     # full_train = dataset_fn(True, transform_train)
-    with open(args.dataset, "rb") as f:
-        db = pkl.load(f)
+    db = utils.pkl_io("r", args.dataset)
     full_train = SingleCellDataset(db)
     all_inds = list(range(len(full_train)))
     # set seed
@@ -220,10 +229,12 @@ def get_data(args):
     dload_train = DataLoader(dset_train, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
     dload_train_labeled = DataLoader(dset_train_labeled, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
     dload_train_labeled = cycle(dload_train_labeled)
-
     dload_test = DataLoader(dset_test, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
     dload_valid = DataLoader(dset_valid, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
-
+    
+    if CACHE_DATA:
+        utils.makedirs("./experiments")
+        utils.pkl_io("w", "./experiments/ttv_idx.pkl", {"train": train_inds, "test": test_inds, "valid": valid_inds})
     return dload_train, dload_train_labeled, dload_valid, dload_test
 
 
@@ -268,36 +279,34 @@ def get_sample_q(args, device):
 
 def eval_classification(f, dload, device, set, epoch=0, cm_normalize="pred"):
     corrects, losses = [], []
-    cm_idx = np.random.randint(0, len(dload))
-    for i, (x_p_d, y_p_d) in enumerate(dload):
+    ys, preds = [], []
+    for x_p_d, y_p_d in dload:
         x_p_d, y_p_d = x_p_d.to(device), y_p_d.to(device)
         logits = f.classify(x_p_d)
         loss = nn.CrossEntropyLoss(reduce=False)(logits, y_p_d).cpu().numpy()
         losses.extend(loss)
         correct = (logits.max(1)[1] == y_p_d).float().cpu().numpy()
         corrects.extend(correct)
-        # plot confusion matrix
-        if set == "test" and i == cm_idx:
-            label_raw = np.array(['CD14+', 'CD19+', 'CD34+', 'CD4+',
-            'CD4+/CD25', 'CD4+/CD45RA+/CD25-',
-            'CD4+/CD45RO+', 'CD56+', 'CD8+',
-            'CD8+/CD45RA+', 'Dendritic'])
-            from sklearn.metrics import confusion_matrix
-            import matplotlib.pyplot as plt
-            cm = confusion_matrix(y_p_d, logits.max(1)[1], normalize=cm_normalize)
-            plt.imshow(cm)
-            batch_label_uniq = sorted(np.unique(y_p_d.cpu().numpy()))
-            pred_class_uniq = sorted(np.unique(logits.max(1)[1]))
-            plot_label = sorted(np.unique(np.concatenate((batch_label_uniq, pred_class_uniq))))
-            plt.xticks(range(len(plot_label)), label_raw[plot_label], rotation=45, horizontalalignment="right")
-            plt.yticks(range(len(plot_label)), label_raw[plot_label])
-            if not os.path.exists("./img"):
-                os.mkdir("./img")
-            plt.savefig("./img/cm_{}.jpg".format(epoch + 1))
-
+        ys.extend(y_p_d.cpu().numpy())
+        preds.extend(logits.max(1)[1].cpu().numpy())
     loss = np.mean(losses)
     correct = np.mean(corrects)
+    # plot confusion matrix
+    plot_cm(ys, preds, cm_normalize, correct, epoch, set=set)
     return correct, loss
+
+def plot_cm(y_p_d, logits, cm_normalize, correct, epoch=0, set="test"):
+    cm = confusion_matrix(y_p_d, logits, normalize=cm_normalize)
+    plt.imshow(cm)
+    # sanity check
+    batch_label_uniq = sorted(np.unique(y_p_d))
+    pred_class_uniq = sorted(np.unique(logits))
+    plot_label = sorted(np.unique(np.concatenate((batch_label_uniq, pred_class_uniq))))
+    plt.xticks(range(len(plot_label)), LABEL_RAW[plot_label], rotation=45, horizontalalignment="right")
+    plt.yticks(range(len(plot_label)), LABEL_RAW[plot_label])
+    plt.title("Confusion Matrix set={}, epoch={}, acc={}".format(set, epoch + 1, correct))
+    utils.makedirs("./img")
+    plt.savefig("./img/cm_{}_{}.jpg".format(set, epoch + 1))
 
 
 def checkpoint(f, buffer, tag, args, device):
@@ -358,7 +367,7 @@ def main(args):
             x_lab, y_lab = x_lab.to(device), y_lab.to(device)
 
             L = 0.
-            if args.p_x_weight > 0:  # maximize log p(x)
+            if args.p_x_weight > 0:  # maximize log p(x) default 1
                 if args.class_cond_p_x_sample:
                     assert not args.uncond, "can only draw class-conditional samples if EBM is class-cond"
                     y_q = t.randint(0, args.n_classes, (args.batch_size,)).to(device)
@@ -388,7 +397,7 @@ def main(args):
                                                                                  acc.item()))
                 L += args.p_y_given_x_weight * l_p_y_given_x
 
-            if args.p_x_y_weight > 0:  # maximize log p(x, y)
+            if args.p_x_y_weight > 0:  # maximize log p(x, y), default 0
                 assert not args.uncond, "this objective can only be trained for class-conditional EBM DUUUUUUUUHHHH!!!"
                 x_q_lab = sample_q(f, replay_buffer, y=y_lab)
                 fp, fq = f(x_lab, y_lab).mean(), f(x_q_lab, y_lab).mean()
@@ -432,8 +441,11 @@ def main(args):
         if epoch % args.eval_every == 0 and (args.p_y_given_x_weight > 0 or args.p_x_y_weight > 0):
             f.eval()
             with t.no_grad():
+                # train
+                correct, loss = eval_classification(f, dload_train, device, "train", epoch)
+                print("Epoch {}: Train Loss {}, Train Acc {}".format(epoch + 1, loss, correct))
                 # validation set
-                correct, loss = eval_classification(f, dload_valid, device, "dummy")
+                correct, loss = eval_classification(f, dload_valid, device, "valid")
                 print("Epoch {}: Valid Loss {}, Valid Acc {}".format(epoch + 1, loss, correct))
                 if correct > best_valid_acc:
                     best_valid_acc = correct
@@ -449,7 +461,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("Energy Based Models and Shit")
-    parser.add_argument("--dataset", type=str, default="./pbmc_filtered.pkl")
+    parser.add_argument("--dataset", type=str, default="./pbmc_filtered.pkl") # path to anndata
     parser.add_argument("--data_root", type=str, default="../data")
     # optimization
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -504,5 +516,9 @@ if __name__ == "__main__":
     parser.add_argument("--n_classes", type=int, default=11)
 
     args = parser.parse_args()
+
+    print(time.ctime())
+    for item in args.__dict__:
+        print("{:24}".format(item), "->\t", args.__dict__[item])
     
     main(args)
