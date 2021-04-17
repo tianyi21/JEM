@@ -245,7 +245,7 @@ def get_sample_q(args, device):
     return sample_q
 
 
-def eval_classification(f, dload, device, set, epoch=0, cm_normalize="pred"):
+def eval_classification(f, dload, device, set, backbone, epoch=0, cm_normalize="pred"):
     corrects, losses = [], []
     ys, preds = [], []
     for x_p_d, y_p_d in dload:
@@ -260,11 +260,14 @@ def eval_classification(f, dload, device, set, epoch=0, cm_normalize="pred"):
     loss = np.mean(losses)
     correct = np.mean(corrects)
     # plot confusion matrix
-    plot_cm(ys, preds, cm_normalize, correct, epoch, set=set)
+    plot_cm(ys, preds, cm_normalize, correct, backbone, epoch, set=set)
     return correct, loss
 
 
-def plot_cm(y_p_d, logits, cm_normalize, correct, epoch=0, set="test"):
+def plot_cm(y_p_d, logits, cm_normalize, correct, backbone, epoch=0, set="test"):
+    def _to_percentage(dec):
+        return str(np.round(dec * 100, 2)) + " %"
+
     cm = confusion_matrix(y_p_d, logits, normalize=cm_normalize)
     plt.imshow(cm)
     # sanity check
@@ -273,9 +276,9 @@ def plot_cm(y_p_d, logits, cm_normalize, correct, epoch=0, set="test"):
     plot_label = sorted(np.unique(np.concatenate((batch_label_uniq, pred_class_uniq))))
     plt.xticks(range(len(plot_label)), LABEL_RAW[plot_label], rotation=45, horizontalalignment="right")
     plt.yticks(range(len(plot_label)), LABEL_RAW[plot_label])
-    plt.title("Confusion Matrix set={}, epoch={}, acc={}".format(set, epoch + 1, correct))
+    plt.title("Confusion Matrix backbone={}, set={}, epoch={}, acc={}".format(backbone, set, epoch + 1, _to_percentage(correct)))
     utils.makedirs("./img")
-    plt.savefig("./img/cm_{}_{}.jpg".format(set, epoch + 1))
+    plt.savefig("./img/cm_{}_{}_{}.jpg".format(backbone, set, epoch + 1))
 
 
 def checkpoint(f, buffer, tag, args, device):
@@ -411,17 +414,17 @@ def main(args):
             f.eval()
             with t.no_grad():
                 # train
-                correct, loss = eval_classification(f, dload_train, device, "train", epoch)
+                correct, loss = eval_classification(f, dload_train, device, "train", args.backbone, epoch)
                 print("Epoch {}: Train Loss {}, Train Acc {}".format(epoch + 1, loss, correct))
                 # validation set
-                correct, loss = eval_classification(f, dload_valid, device, "valid")
+                correct, loss = eval_classification(f, dload_valid, device, "valid", args.backbone, epoch)
                 print("Epoch {}: Valid Loss {}, Valid Acc {}".format(epoch + 1, loss, correct))
                 if correct > best_valid_acc:
                     best_valid_acc = correct
                     print("Best Valid!: {}".format(correct))
                     checkpoint(f, replay_buffer, "best_valid_ckpt.pt", args, device)
                 # test set
-                correct, loss = eval_classification(f, dload_test, device, "test", epoch)
+                correct, loss = eval_classification(f, dload_test, device, "test", args.backbone, epoch)
                 print("Epoch {}: Test Loss {}, Test Acc {}".format(epoch + 1, loss, correct))
             f.train()
         checkpoint(f, replay_buffer, "last_ckpt.pt", args, device)
@@ -479,12 +482,12 @@ if __name__ == "__main__":
     parser.add_argument("--n_classes", type=int, default=11)
 
     # CLAMSNet arch
-    parser.add_argument("--backbone", choice=["resnet, mlp"], required=True)
-    parser.add_argument("--arch", type=list, help="dimension of each layer")
-    parser.add_argument("--num_block", type=list, required=True, help="For resnet backbone only: number of block per layer")
+    parser.add_argument("--backbone", choices=["resnet", "mlp"], required=True)
+    parser.add_argument("--arch", nargs="+", type=int, help="dimension of each layer")
+    parser.add_argument("--num_block", nargs="+", type=int, help="For resnet backbone only: number of block per layer")
     parser.add_argument("--req_bn", action="store_true", help="If set, uses BatchNorm in CLAMSNet")
     parser.add_argument("--dropout_rate", type=float, default=0.0)
-    parser.add_argument("--act_func", choice=["relu, sigmoid, tanh, lrelu"], required=True, default="lrelu")
+    parser.add_argument("--act_func", choices=["relu, sigmoid, tanh, lrelu"], default="lrelu")
 
     args = parser.parse_args()
 
