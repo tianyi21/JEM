@@ -68,12 +68,13 @@ class DataSubset(Dataset):
 
 
 class F(nn.Module):
-    def __init__(self, depth=28, width=2, norm=None):
+    def __init__(self, backbone, arch, num_block, req_bn, act_func, dropout_rate, n_classes):
         super(F, self).__init__()
-        # self.f = wideresnet.Wide_ResNet(depth, width, norm=norm)
-        self.f = clamsnet.Clams_Net()
+        self.backbone = backbone
+        self.arch = arch
+        self.f = clamsnet.Clams_Net(backbone, arch, num_block, req_bn, act_func, dropout_rate)
         self.energy_output = nn.Linear(self.f.last_dim, 1)
-        self.class_output = nn.Linear(self.f.last_dim, 10)
+        self.class_output = nn.Linear(self.f.last_dim, n_classes)
 
     def forward(self, x, y=None):
         penult_z = self.f(x)
@@ -81,13 +82,13 @@ class F(nn.Module):
 
     def classify(self, x):
         penult_z = self.f(x)
-        return self.class_output(penult_z)
+        return self.class_output(penult_z).squeeze()
 
 
 class CCF(F):
-    def __init__(self, depth=28, width=2, norm=None):
-        super(CCF, self).__init__(depth, width, norm=norm)
-
+    def __init__(self, backbone, arch, num_block, req_bn, act_func, dropout_rate=0.0, n_classes=10):
+        super(CCF, self).__init__(
+            backbone=backbone, arch=arch, num_block=num_block, req_bn=req_bn, act_func=act_func, dropout_rate=dropout_rate, n_classes=n_classes)
     def forward(self, x, y=None):
         logits = self.classify(x)
         if y is None:
@@ -474,7 +475,7 @@ def main(args):
     device = t.device('cuda' if t.cuda.is_available() else 'cpu')
 
     model_cls = F if args.uncond else CCF
-    f = model_cls(args.depth, args.width, args.norm)
+    f = model_cls(args.backbone, args.arch, args.num_block, args.req_bn, args.act_func, dropout_rate=args.dropout_rate, n_classes=args.n_classes)
     print(f"loading model from {args.load_path}")
 
     # load em up
@@ -543,8 +544,13 @@ if __name__ == "__main__":
 
     parser.add_argument("--n_classes", type=int, default=11)
 
-    parser.add_argument("--backbone", choice=["resnet, mlp"], required=True)
-    parser.add_argument("--arch", type=list, required=True)
+    parser.add_argument("--backbone", choices=["resnet", "mlp"], required=True)
+    parser.add_argument("--arch", nargs="+", type=int, help="dimension of each layer")
+    parser.add_argument("--num_block", nargs="+", type=int, help="For resnet backbone only: number of block per layer")
+    parser.add_argument("--req_bn", action="store_true", help="If set, uses BatchNorm in CLAMSNet")
+    parser.add_argument("--dropout_rate", type=float, default=0.0)
+    parser.add_argument("--act_func", choices=["relu, sigmoid, tanh, lrelu"], default="lrelu")
+
 
     args = parser.parse_args()
     main(args)
