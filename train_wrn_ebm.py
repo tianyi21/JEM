@@ -237,8 +237,8 @@ def get_data(args):
     dload_valid = DataLoader(dset_valid, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
     
     if CACHE_DATA:
-        utils.makedirs("./experiments")
-        utils.pkl_io("w", "./experiments/ttv_idx.pkl", {"train": train_inds, "test": test_inds, "valid": valid_inds})
+        utils.makedirs(args.save_dir)
+        utils.pkl_io("w", os.path.join(args.save_dir, "ttv_idx.pkl", {"train": train_inds, "test": test_inds, "valid": valid_inds})
     return dload_train, dload_train_labeled, dload_valid, dload_test
 
 

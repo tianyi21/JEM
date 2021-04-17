@@ -264,9 +264,9 @@ def logp_hist(f, args, device):
             this_scores.extend(scores.numpy())
         score_dict[dataset_name] = this_scores
     """
-    if not os.path.isfile("./experiments/ttv_idx.pkl"):
+    if not os.path.isfile("./experiment/ttv_idx.pkl"):
         raise FileNotFoundError("set split not found.")
-    ttv_dict = utils.pkl_io("r", "./experiments/ttv_idx.pkl")
+    ttv_dict = utils.pkl_io("r", "./experiment/ttv_idx.pkl")
     train_inds, test_inds, valid_inds = ttv_dict.values()
     db = utils.pkl_io("r", args.dataset)
     if args.logpset == "train":
@@ -320,9 +320,9 @@ def OODAUC(f, args, device):
     else:
         dset_fake = tv.datasets.CIFAR10(root="../data", transform=transform_test, download=True, train=False)
     """
-    if not os.path.isfile("./experiments/ttv_idx.pkl"):
+    if not os.path.isfile("./experiment/ttv_idx.pkl"):
         raise FileNotFoundError("set split not found.")
-    ttv_dict = utils.pkl_io("r", "./experiments/ttv_idx.pkl")
+    ttv_dict = utils.pkl_io("r", "./experiment/ttv_idx.pkl")
     train_inds, test_inds, valid_inds = ttv_dict.values()
     db = utils.pkl_io("r", args.dataset)
 
@@ -425,9 +425,9 @@ def test_clf(f, args, device):
     dload = DataLoader(dset, batch_size=100, shuffle=False, num_workers=4, drop_last=False)
     """
 
-    if not os.path.isfile("./experiments/ttv_idx.pkl"):
+    if not os.path.isfile("./experiment/ttv_idx.pkl"):
         raise FileNotFoundError("set split not found.")
-    ttv_dict = utils.pkl_io("r", "./experiments/ttv_idx.pkl")
+    ttv_dict = utils.pkl_io("r", "./experiment/ttv_idx.pkl")
     train_inds, test_inds, valid_inds = ttv_dict.values()
     db = utils.pkl_io("r", args.dataset)
 
