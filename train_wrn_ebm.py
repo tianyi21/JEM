@@ -84,10 +84,11 @@ class DataSubset(Dataset):
 
 
 class F(nn.Module):
-    def __init__(self, depth=28, width=2, norm=None, dropout_rate=0.0, n_classes=10):
+    def __init__(self, backbone, arch, req_bn, dropout_rate, n_classes,):
         super(F, self).__init__()
-        # self.f = wideresnet.Wide_ResNet(depth, width, norm=norm, dropout_rate=dropout_rate)
-        self.f = clamsnet.Clams_Net()
+        self.backbone = backbone
+        self.arch = arch
+        self.f = clamsnet.Clams_Net(backbone, arch, req_bn, dropout_rate)
         self.energy_output = nn.Linear(self.f.last_dim, 1)
         self.class_output = nn.Linear(self.f.last_dim, n_classes)
 
@@ -101,8 +102,8 @@ class F(nn.Module):
 
 
 class CCF(F):
-    def __init__(self, depth=28, width=2, norm=None, dropout_rate=0.0, n_classes=10):
-        super(CCF, self).__init__(depth, width, norm=norm, dropout_rate=dropout_rate, n_classes=n_classes)
+    def __init__(self, backbone, arch, req_bn, dropout_rate=0.0, n_classes=10):
+        super(CCF, self).__init__(backbone=backbone, arch=arch, req_bn=req_bn, dropout_rate=dropout_rate, n_classes=n_classes)
 
     def forward(self, x, y=None):
         logits = self.classify(x)
@@ -110,6 +111,9 @@ class CCF(F):
             return logits.logsumexp(1)
         else:
             return t.gather(logits, 1, y[:, None])
+    
+    def __str__():
+
 
 
 def cycle(loader):
@@ -144,7 +148,7 @@ def init_random(args, bs):
 
 def get_model_and_buffer(args, device, sample_q):
     model_cls = F if args.uncond else CCF
-    f = model_cls(args.depth, args.width, args.norm, dropout_rate=args.dropout_rate, n_classes=args.n_classes)
+    f = model_cls(args.backbone, args.arch, args.req_bn, dropout_rate=args.dropout_rate, n_classes=args.n_classes)
     if not args.uncond:
         assert args.buffer_size % args.n_classes == 0, "Buffer size must be divisible by args.n_classes"
     if args.load_path is None:
@@ -482,18 +486,12 @@ if __name__ == "__main__":
     parser.add_argument("--p_y_given_x_weight", type=float, default=1.)
     parser.add_argument("--p_x_y_weight", type=float, default=0.)
     # regularization
-    parser.add_argument("--dropout_rate", type=float, default=0.0)
     parser.add_argument("--sigma", type=float, default=3e-2,
                         help="stddev of gaussian noise to add to input, .03 works but .1 is more stable")
     parser.add_argument("--weight_decay", type=float, default=0.0)
-    # network
-    parser.add_argument("--norm", type=str, default=None, choices=[None, "norm", "batch", "instance", "layer", "act"],
-                        help="norm to add to weights, none works fine")
     # EBM specific
     parser.add_argument("--n_steps", type=int, default=20,
                         help="number of steps of SGLD per iteration, 100 works for short-run, 20 works for PCD")
-    parser.add_argument("--width", type=int, default=10, help="WRN width parameter")
-    parser.add_argument("--depth", type=int, default=28, help="WRN depth parameter")
     parser.add_argument("--uncond", action="store_true", help="If set, then the EBM is unconditional")
     parser.add_argument("--class_cond_p_x_sample", action="store_true",
                         help="If set we sample from p(y)p(x|y), othewise sample from p(x),"
@@ -514,6 +512,20 @@ if __name__ == "__main__":
     parser.add_argument("--n_valid", type=int, default=5000)
     parser.add_argument("--n_test", type=int, default=5000)
     parser.add_argument("--n_classes", type=int, default=11)
+
+    # CLAMSNet arch
+    parser.add_argument("--backbone", choice=["resnet, mlp"], required=True)
+
+    group = parser.add_mutually_exclusive_group(required=True)
+    # mlp is defined based on arch
+    # resnet is defeind based on either arch or pooling
+    group.add_argument("--arch", type=list, help="dimension of each layer")
+    group.add_argument("--pooling",type=list, help="For resnet backbone only: kernel size of pooling after each layer, last layer doesn't have max pooling")
+   
+    parser.add_argument("--num_block", type=list, required=True, help="For resnet backbone only: number of block per layer")
+    parser.add_argument("--act_func", choice=["relu, sigmoid, tanh, lrelu"], required=True, default="lrelu")
+    parser.add_argument("--dropout_rate", type=float, default=0.0)
+    parser.add_argument("--req_bn", action="store_true", help="If set, uses BatchNorm in CLAMSNet")
 
     args = parser.parse_args()
 

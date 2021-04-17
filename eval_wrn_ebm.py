@@ -543,6 +543,8 @@ if __name__ == "__main__":
 
     parser.add_argument("--n_classes", type=int, default=11)
 
+    parser.add_argument("--backbone", choice=["resnet, mlp"], required=True)
+    parser.add_argument("--arch", type=list, required=True)
 
     args = parser.parse_args()
     main(args)
