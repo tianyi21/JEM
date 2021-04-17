@@ -34,7 +34,7 @@ def format_model_str(model, intro):
 
 
 class ResBlock(nn.Module):
-    def __init__(self, dim, req_bn, dropout_rate, act_func):
+    def __init__(self, dim, req_bn, act_func, dropout_rate):
         """
         Residual Block
         # act(side-path [fc + (bn) + act + drop + fc + (bn) + drop] + shortcut)
@@ -55,63 +55,55 @@ class ResBlock(nn.Module):
         self.shortcut = nn.Sequential()
     
     def forward(self, x):
-        return self.res_act(self.side(x) + self.shortcut(x))
+        return self.res_act()(self.side(x) + self.shortcut(x))
     
     def __str__(self):
+        # dummy
         return format_model_str(self.side, "ResBlock Arch")
 
 
 class ClamsResNet(nn.Module):
-    def __init__(self, in_dim, arch, num_block, pooling, req_bn, dropout_rate, act_func):
+    def __init__(self, in_dim, arch, num_block, req_bn, act_func, dropout_rate):
         """
         in_dim:     inital data input dim
         arch:       dimension of a residual layer           len = n
         num_block:  number of block per layer               len = n 
-        pooling:    max pool kernel at the end of layer     len = n - 1
         """
         super(ClamsResNet, self).__init__()
         self.in_dim = in_dim
         self.arch = arch
         self.num_block = num_block
-        self.pooling = pooling
         
         # sanity check
         assert len(arch) == len(num_block)
-        assert len(num_block) == len(pooling) + 1
-        tmp = arch[0]
-        for i in pooling:
-            tmp = tmp // i
-        assert tmp > 0
-
-        # last layer does not have pooling
-        pooling += [1]
 
         layer = []
         layer.append(nn.Linear(in_dim, arch[0]))
-        for dim, num_blk, pool in zip(arch, num_block, pooling):
-            layer.append(self._make_layer(dim, num_blk, pool, req_bn, dropout_rate, act_func))
+        for i, (dim, num_blk) in enumerate(zip(arch, num_block)):
+            layer.append(self._make_layer(dim, num_blk, req_bn, act_func, dropout_rate))
+            if i < len(arch) - 1:
+                layer.append(nn.Linear(arch[i], arch[i+1]))
         self.model = nn.Sequential(*layer)
     
     def forward(self, x):
         return self.model(x)
     
-    def _make_layer(self, dim, num_block, pooling, req_bn, dropout_rate, act_func):
+    def _make_layer(self, dim, num_block, req_bn, act_func, dropout_rate):
         layer = []
-        for _ in num_block:
-            layer.append(ResBlock(dim, req_bn, dropout_rate, act_func))
-            layer.append(nn.MaxPool1d(pooling))
+        for _ in range(num_block):
+            layer.append(ResBlock(dim, req_bn, act_func, dropout_rate))
         return nn.Sequential(*layer)
     
     def __str__(self):
         model_str = "CLAMS ResNet Arch\n"
         model_str += "Input dim: {}\n".format(self.in_dim)
-        for i, (dim, num_blk, pool) in enumerate(zip(self.arch, self.num_block, self.pooling)):
-            model_str += "\nLayer: {}\t{} ResBlocks of dimension {} each. End-layer pooling: {}\n".format(i + 1, num_blk, dim, pool)
+        for i, (dim, num_blk) in enumerate(zip(self.arch, self.num_block)):
+            model_str += "Layer: {}\t{} ResBlocks of dimension {} each.\n".format(i + 1, num_blk, dim)
         return model_str
         
 
 class MultiLayerPerceptron(nn.Module):
-    def __init__(self, in_dim, arch, req_bn, dropout_rate, act_func):
+    def __init__(self, in_dim, arch, req_bn, act_func, dropout_rate):
         """
         in_dim:     inital data input dim
         arch:       dimension of each layer                 len = n
@@ -139,13 +131,13 @@ class MultiLayerPerceptron(nn.Module):
 class Clams_Net(nn.Module):
     in_dim = 5000
 
-    def __init__(self, backbone, arch, req_bn, dropout_rate, act_func, num_block, pooling):
+    def __init__(self, backbone, arch, num_block, req_bn, act_func, dropout_rate):
         super(Clams_Net, self).__init__()
         self.last_dim = arch[-1]
         if backbone == "mlp":
-            self.model = MultiLayerPerceptron(self.in_dim, arch, req_bn, dropout_rate, act_func)
+            self.model = MultiLayerPerceptron(self.in_dim, arch, req_bn, act_func, dropout_rate)
         elif backbone == "resnet":
-            self.model = ClamsResNet(self.in_dim, arch, num_block, pooling, req_bn, dropout_rate, act_func)
+            self.model = ClamsResNet(self.in_dim, arch, num_block, req_bn, act_func, dropout_rate)
     
     def forward(self, x):
         return self.model(x)
@@ -156,4 +148,5 @@ class Clams_Net(nn.Module):
 
     def __str__(self):
         return self.model.__str__()
+
 

@@ -84,11 +84,11 @@ class DataSubset(Dataset):
 
 
 class F(nn.Module):
-    def __init__(self, backbone, arch, req_bn, dropout_rate, n_classes,):
+    def __init__(self, backbone, arch, num_block, req_bn, act_func, dropout_rate, n_classes):
         super(F, self).__init__()
         self.backbone = backbone
         self.arch = arch
-        self.f = clamsnet.Clams_Net(backbone, arch, req_bn, dropout_rate)
+        self.f = clamsnet.Clams_Net(backbone, arch, num_block, req_bn, act_func, dropout_rate)
         self.energy_output = nn.Linear(self.f.last_dim, 1)
         self.class_output = nn.Linear(self.f.last_dim, n_classes)
 
@@ -102,18 +102,15 @@ class F(nn.Module):
 
 
 class CCF(F):
-    def __init__(self, backbone, arch, req_bn, dropout_rate=0.0, n_classes=10):
-        super(CCF, self).__init__(backbone=backbone, arch=arch, req_bn=req_bn, dropout_rate=dropout_rate, n_classes=n_classes)
-
+    def __init__(self, backbone, arch, num_block, req_bn, act_func, dropout_rate=0.0, n_classes=10):
+        super(CCF, self).__init__(
+            backbone=backbone, arch=arch, num_block=num_block, req_bn=req_bn, act_func=act_func, dropout_rate=dropout_rate, n_classes=n_classes)
     def forward(self, x, y=None):
         logits = self.classify(x)
         if y is None:
             return logits.logsumexp(1)
         else:
             return t.gather(logits, 1, y[:, None])
-    
-    def __str__():
-
 
 
 def cycle(loader):
@@ -148,7 +145,7 @@ def init_random(args, bs):
 
 def get_model_and_buffer(args, device, sample_q):
     model_cls = F if args.uncond else CCF
-    f = model_cls(args.backbone, args.arch, args.req_bn, dropout_rate=args.dropout_rate, n_classes=args.n_classes)
+    f = model_cls(args.backbone, args.arch, args.num_block, args.req_bn, args.act_func, dropout_rate=args.dropout_rate, n_classes=args.n_classes)
     if not args.uncond:
         assert args.buffer_size % args.n_classes == 0, "Buffer size must be divisible by args.n_classes"
     if args.load_path is None:
@@ -165,39 +162,6 @@ def get_model_and_buffer(args, device, sample_q):
 
 
 def get_data(args):
-    """
-    if args.dataset == "svhn":
-        transform_train = tr.Compose(
-            [tr.Pad(4, padding_mode="reflect"),
-             tr.RandomCrop(im_sz),
-             tr.ToTensor(),
-             tr.Normalize((.5, .5, .5), (.5, .5, .5)),
-             lambda x: x + args.sigma * t.randn_like(x)]
-        )
-    else:
-        transform_train = tr.Compose(
-            [tr.Pad(4, padding_mode="reflect"),
-             tr.RandomCrop(im_sz),
-             tr.RandomHorizontalFlip(),
-             tr.ToTensor(),
-             tr.Normalize((.5, .5, .5), (.5, .5, .5)),
-             lambda x: x + args.sigma * t.randn_like(x)]
-        )
-    transform_test = tr.Compose(
-        [tr.ToTensor(),
-         tr.Normalize((.5, .5, .5), (.5, .5, .5)),
-         lambda x: x + args.sigma * t.randn_like(x)]
-    )
-    def dataset_fn(train, transform):
-        if args.dataset == "cifar10":
-            return tv.datasets.CIFAR10(root=args.data_root, transform=transform, download=True, train=train)
-        elif args.dataset == "cifar100":
-            return tv.datasets.CIFAR100(root=args.data_root, transform=transform, download=True, train=train)
-        else:
-            return tv.datasets.SVHN(root=args.data_root, transform=transform, download=True,
-                                    split="train" if train else "test")
-    """
-
     # get all training inds
     # full_train = dataset_fn(True, transform_train)
     db = utils.pkl_io("r", args.dataset)
@@ -238,7 +202,7 @@ def get_data(args):
     
     if CACHE_DATA:
         utils.makedirs(args.save_dir)
-        utils.pkl_io("w", os.path.join(args.save_dir, "ttv_idx.pkl", {"train": train_inds, "test": test_inds, "valid": valid_inds})
+        utils.pkl_io("w", os.path.join(args.save_dir, "ttv_idx.pkl"), {"train": train_inds, "test": test_inds, "valid": valid_inds})
     return dload_train, dload_train_labeled, dload_valid, dload_test
 
 
@@ -298,6 +262,7 @@ def eval_classification(f, dload, device, set, epoch=0, cm_normalize="pred"):
     # plot confusion matrix
     plot_cm(ys, preds, cm_normalize, correct, epoch, set=set)
     return correct, loss
+
 
 def plot_cm(y_p_d, logits, cm_normalize, correct, epoch=0, set="test"):
     cm = confusion_matrix(y_p_d, logits, normalize=cm_normalize)
@@ -515,17 +480,11 @@ if __name__ == "__main__":
 
     # CLAMSNet arch
     parser.add_argument("--backbone", choice=["resnet, mlp"], required=True)
-
-    group = parser.add_mutually_exclusive_group(required=True)
-    # mlp is defined based on arch
-    # resnet is defeind based on either arch or pooling
-    group.add_argument("--arch", type=list, help="dimension of each layer")
-    group.add_argument("--pooling",type=list, help="For resnet backbone only: kernel size of pooling after each layer, last layer doesn't have max pooling")
-   
+    parser.add_argument("--arch", type=list, help="dimension of each layer")
     parser.add_argument("--num_block", type=list, required=True, help="For resnet backbone only: number of block per layer")
-    parser.add_argument("--act_func", choice=["relu, sigmoid, tanh, lrelu"], required=True, default="lrelu")
-    parser.add_argument("--dropout_rate", type=float, default=0.0)
     parser.add_argument("--req_bn", action="store_true", help="If set, uses BatchNorm in CLAMSNet")
+    parser.add_argument("--dropout_rate", type=float, default=0.0)
+    parser.add_argument("--act_func", choice=["relu, sigmoid, tanh, lrelu"], required=True, default="lrelu")
 
     args = parser.parse_args()
 
