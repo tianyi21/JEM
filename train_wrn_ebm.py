@@ -289,7 +289,8 @@ def checkpoint(f, buffer, tag, args, device):
     f.cpu()
     ckpt_dict = {
         "model_state_dict": f.state_dict(),
-        "replay_buffer": buffer
+        "replay_buffer": buffer,
+        "class_drop": args.class_drop
     }
     t.save(ckpt_dict, os.path.join(args.save_dir, tag))
     f.to(device)
