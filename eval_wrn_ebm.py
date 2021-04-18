@@ -302,11 +302,9 @@ def OODAUC(f, args, device):
     db = utils.pkl_io("r", args.dataset)
 
     dset_real = return_set(db, args.rset, set_split_dict)
-    dset_fake = return_set(db, args.fset, set_split_dict)
     dload_real = DataLoader(dset_real, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=False)
-    dload_fake = DataLoader(dset_fake, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=False)
 
-    print("Calculating real scores")
+    print("Calculating real scores\n")
     real_scores = []
     for x, _ in dload_real:
         x = x.to(device)
@@ -314,23 +312,27 @@ def OODAUC(f, args, device):
         real_scores.extend(scores.numpy())
         # print(scores.mean())
 
-    print("Calculating fake scores")
-    fake_scores = []
-    for x, _ in dload_fake:
-        x = x.to(device)
-        scores = score_fn(x)
-        fake_scores.extend(scores.numpy())
-        # print(scores.mean())
-    
     real_labels = np.ones_like(real_scores)
-    fake_labels = np.zeros_like(fake_scores)
-    scores = np.concatenate([real_scores, fake_scores])
-    labels = np.concatenate([real_labels, fake_labels])
-    score = sklearn.metrics.roc_auc_score(labels, scores)
-    print("ROC Score: {}".format(score))
-
     plt.hist(real_scores, density=True, label=args.rset, bins=100, alpha=.5)
-    plt.hist(fake_scores, density=True, label=args.fset, bins=100, alpha=.5)
+
+    for ds in args.fset:
+        dset_fake = return_set(db, ds, set_split_dict)
+        dload_fake = DataLoader(dset_fake, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=False)
+        print("Calculating fake scores for {}\n".format(ds))
+        fake_scores = []
+        for x, _ in dload_fake:
+            x = x.to(device)
+            scores = score_fn(x)
+            fake_scores.extend(scores.numpy())
+            # print(scores.mean())
+        plt.hist(fake_scores, density=True, label=ds, bins=100, alpha=.5)
+    
+        fake_labels = np.zeros_like(fake_scores)
+        labels = np.concatenate([real_labels, fake_labels])
+        scores = np.concatenate([real_scores, fake_scores])
+        score = sklearn.metrics.roc_auc_score(labels, scores)
+        print("ROC Score of {} & {}: {}\n".format(args.rset, ds, score))
+
     plt.legend()
     plt.savefig("./img/OOD_hist.pdf")
 
@@ -454,7 +456,7 @@ if __name__ == "__main__":
     parser.add_argument("--act_func", choices=["relu", "sigmoid", "tanh", "lrelu"], default="lrelu")
 
     parser.add_argument("--rset", type=str, choices=["train", "test", "valid", "ood", "test+ood"], default="train", help="OODAUC real dateset")
-    parser.add_argument("--fset", type=str, choices=["train", "test", "valid", "ood", "test+ood"], default="test+ood", help="OODAUC fake dataset")
+    parser.add_argument("--fset", nargs="+", type=str, default=["test+ood"], choices=["train", "test", "valid", "ood", "test+ood"], help="OODAUC fake dataset")
     parser.add_argument("--clfset", type=str, choices=["train", "test", "valid", "ood", "test+ood"], help="test_clf dataset")
     parser.add_argument("--logpset", type=str, choices=["train", "test", "valid", "ood", "test+ood"], default="ood+test", help="test_clf dataset")
     
