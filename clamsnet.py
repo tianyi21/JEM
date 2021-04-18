@@ -135,6 +135,8 @@ class Clams_Net(nn.Module):
         super(Clams_Net, self).__init__()
         self.last_dim = arch[-1]
         if backbone == "mlp":
+            if num_block is not None:
+                print("MLP backbone specified, num_block is omitted.")
             self.model = MultiLayerPerceptron(self.in_dim, arch, req_bn, act_func, dropout_rate)
         elif backbone == "resnet":
             self.model = ClamsResNet(self.in_dim, arch, num_block, req_bn, act_func, dropout_rate)
