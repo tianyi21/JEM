@@ -30,6 +30,7 @@ import json
 # Sampling
 from tqdm import tqdm
 import time
+import anndata
 
 from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
@@ -78,7 +79,7 @@ class DataSubset(Dataset):
     def __getitem__(self, index):
         base_ind = self.inds[index]
         return self.base_dataset[base_ind]
-
+    
     def __len__(self):
         return len(self.inds)
 
@@ -162,47 +163,50 @@ def get_model_and_buffer(args, device, sample_q):
 
 
 def get_data(args):
-    # get all training inds
-    # full_train = dataset_fn(True, transform_train)
+    def _drop_class(db, n_classes, class_drop):
+        if class_drop >= n_classes:
+            raise ValueError("Invalid class index provided")
+        assert n_classes == len(np.unique(db.obs["int_label"]))
+        if class_drop < 0:
+            return list(range(len(db))), []
+        print("Dropping class {} (index={}) for OOD.".format(LABEL_RAW[class_drop], class_drop))
+        ood_idx = np.where(db.obs["int_label"] == class_drop)[0]
+        ttv_idx = [x for x in list(range(len(db))) if x not in ood_idx]
+        print("Length ttv: {}\tLength ood: {}".format(len(ttv_idx), len(ood_idx)))
+        return list(ttv_idx), list(ood_idx)
+
+    # whole dataset
     db = utils.pkl_io("r", args.dataset)
-    full_train = SingleCellDataset(db)
-    all_inds = list(range(len(full_train)))
+    # split t(rain)t(est)v(alid) index and OOD index by dropping specific class
+    ttv_idx, ood_idx = _drop_class(db, args.n_classes, args.class_drop)
+    # split ttv into t, t, v
+    all_inds = ttv_idx
     # set seed
     np.random.seed(1234)
     # shuffle
     np.random.shuffle(all_inds)
-    # seperate out validation set
+    # separate out validation set
     if args.n_valid is not None:
         test_inds, valid_inds, train_inds = all_inds[:args.n_test], all_inds[args.n_test:args.n_valid+args.n_test], all_inds[args.n_valid+args.n_test:]
     else:
         test_inds, valid_inds, train_inds = all_inds[:args.n_test], [], all_inds[args.n_test:]
-    train_inds = np.array(train_inds)
-    train_labeled_inds = []
-    other_inds = []
-    train_labels = np.array([full_train[ind][1] for ind in train_inds])
-
-    if args.labels_per_class > 0:
-        for i in range(args.n_classes):
-            print(i)
-            train_labeled_inds.extend(train_inds[train_labels == i][:args.labels_per_class])
-            other_inds.extend(train_inds[train_labels == i][args.labels_per_class:])
-    else:
-        train_labeled_inds = train_inds
+    print("Train: {}\tValid: {}\tTest:{}".format(len(train_inds), len(valid_inds), len(test_inds) + len(ood_idx)))
 
     dset_train = DataSubset(SingleCellDataset(db), inds=train_inds)
     dset_valid = DataSubset(SingleCellDataset(db), inds=valid_inds)
-    dset_test = DataSubset(SingleCellDataset(db), inds=test_inds)
-    dset_train_labeled = DataSubset(SingleCellDataset(db), inds=train_labeled_inds)
+    dset_test = DataSubset(SingleCellDataset(db), inds=(test_inds + ood_idx))
 
-    dload_train = DataLoader(dset_train, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
-    dload_train_labeled = DataLoader(dset_train_labeled, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
+    dload_train = DataLoader(dset_train, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=False)
+    dload_train_labeled = DataLoader(dset_train, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=False)
     dload_train_labeled = cycle(dload_train_labeled)
-    dload_test = DataLoader(dset_test, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
-    dload_valid = DataLoader(dset_valid, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
-    
+    dload_test = DataLoader(dset_test, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=False)
+    dload_valid = DataLoader(dset_valid, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=False)
+    dload_test = DataLoader(dset_test, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=False)
+
     if CACHE_DATA:
         utils.makedirs(args.save_dir)
-        utils.pkl_io("w", os.path.join(args.save_dir, "ttv_idx.pkl"), {"train": train_inds, "test": test_inds, "valid": valid_inds})
+        utils.pkl_io("w", os.path.join(args.save_dir, "set_split_idx_ood_{}.pkl".format(args.class_drop)), 
+        {"train": train_inds, "valid": valid_inds, "test": test_inds, "ood": ood_idx})
     return dload_train, dload_train_labeled, dload_valid, dload_test
 
 
@@ -245,7 +249,7 @@ def get_sample_q(args, device):
     return sample_q
 
 
-def eval_classification(f, dload, device, set, backbone, epoch=0, cm_normalize="pred"):
+def eval_classification(f, dload, device, backbone, class_drop, set, epoch=0, cm_normalize="pred"):
     corrects, losses = [], []
     ys, preds = [], []
     for x_p_d, y_p_d in dload:
@@ -260,11 +264,11 @@ def eval_classification(f, dload, device, set, backbone, epoch=0, cm_normalize="
     loss = np.mean(losses)
     correct = np.mean(corrects)
     # plot confusion matrix
-    plot_cm(ys, preds, cm_normalize, correct, backbone, epoch, set=set)
+    plot_cm(ys, preds, cm_normalize, correct, backbone, class_drop, set, epoch)
     return correct, loss
 
 
-def plot_cm(y_p_d, logits, cm_normalize, correct, backbone, epoch=0, set="test"):
+def plot_cm(y_p_d, logits, cm_normalize, correct, backbone, class_drop, set="test", epoch=0):
     def _to_percentage(dec):
         return str(np.round(dec * 100, 2)) + " %"
 
@@ -276,9 +280,9 @@ def plot_cm(y_p_d, logits, cm_normalize, correct, backbone, epoch=0, set="test")
     plot_label = sorted(np.unique(np.concatenate((batch_label_uniq, pred_class_uniq))))
     plt.xticks(range(len(plot_label)), LABEL_RAW[plot_label], rotation=45, horizontalalignment="right")
     plt.yticks(range(len(plot_label)), LABEL_RAW[plot_label])
-    plt.title("Confusion Matrix backbone={}, set={}, epoch={}, acc={}".format(backbone, set, epoch + 1, _to_percentage(correct)))
+    plt.title("CM drop={}, backbone={}, set={}, epoch={}, acc={}".format(backbone, class_drop, set, epoch + 1, _to_percentage(correct)))
     utils.makedirs("./img")
-    plt.savefig("./img/cm_{}_{}_{}.jpg".format(backbone, set, epoch + 1))
+    plt.savefig("./img/cm_{}_{}_{}_ood_{}.jpg".format(backbone, set, epoch + 1, class_drop))
 
 
 def checkpoint(f, buffer, tag, args, device):
@@ -309,9 +313,6 @@ def main(args):
 
     sample_q = get_sample_q(args, device)
     f, replay_buffer = get_model_and_buffer(args, device, sample_q)
-
-    sqrt = lambda x: int(t.sqrt(t.Tensor([x])))
-    plot = lambda p, x: tv.utils.save_image(t.clamp(x, -1, 1), p, normalize=True, nrow=sqrt(x.size(0)))
 
     # optimizer
     params = f.class_output.parameters() if args.clf_only else f.parameters()
@@ -347,7 +348,9 @@ def main(args):
                 else:
                     x_q = sample_q(f, replay_buffer)  # sample from log-sumexp
 
+                # log of energy -> corresponds to second term in eqn 2 in paper
                 fp_all = f(x_p_d)
+                # first term in eqn 2: SGLD to estimate expectation
                 fq_all = f(x_q)
                 fp = fp_all.mean()
                 fq = fq_all.mean()
@@ -390,23 +393,6 @@ def main(args):
             optim.step()
             cur_iter += 1
 
-            # no plot needed
-            """
-            if cur_iter % 100 == 0:
-                if args.plot_uncond:
-                    if args.class_cond_p_x_sample:
-                        assert not args.uncond, "can only draw class-conditional samples if EBM is class-cond"
-                        y_q = t.randint(0, args.n_classes, (args.batch_size,)).to(device)
-                        x_q = sample_q(f, replay_buffer, y=y_q)
-                    else:
-                        x_q = sample_q(f, replay_buffer)
-                    plot('{}/x_q_{}_{:>06d}.png'.format(args.save_dir, epoch, i), x_q)
-                if args.plot_cond:  # generate class-conditional samples
-                    y = t.arange(0, args.n_classes)[None].repeat(args.n_classes, 1).transpose(1, 0).contiguous().view(-1).to(device)
-                    x_q_y = sample_q(f, replay_buffer, y=y)
-                    plot('{}/x_q_y{}_{:>06d}.png'.format(args.save_dir, epoch, i), x_q_y)
-            """
-
         if epoch % args.ckpt_every == 0:
             checkpoint(f, replay_buffer, f'ckpt_{epoch}.pt', args, device)
 
@@ -414,18 +400,19 @@ def main(args):
             f.eval()
             with t.no_grad():
                 # train
-                correct, loss = eval_classification(f, dload_train, device, "train", args.backbone, epoch)
+                correct, loss = eval_classification(f, dload_train, device, args.backbone, args.class_drop, "train", epoch)
                 print("Epoch {}: Train Loss {}, Train Acc {}".format(epoch + 1, loss, correct))
                 # validation set
-                correct, loss = eval_classification(f, dload_valid, device, "valid", args.backbone, epoch)
+                correct, loss = eval_classification(f, dload_valid, device, args.backbone, args.class_drop, "valid", epoch)
                 print("Epoch {}: Valid Loss {}, Valid Acc {}".format(epoch + 1, loss, correct))
                 if correct > best_valid_acc:
                     best_valid_acc = correct
                     print("Best Valid!: {}".format(correct))
                     checkpoint(f, replay_buffer, "best_valid_ckpt.pt", args, device)
                 # test set
-                correct, loss = eval_classification(f, dload_test, device, "test", args.backbone, epoch)
-                print("Epoch {}: Test Loss {}, Test Acc {}".format(epoch + 1, loss, correct))
+                if args.class_drop == -1:
+                    correct, loss = eval_classification(f, dload_test, device, args.backbone, epoch, "test")
+                    print("Epoch {}: Test Loss {}, Test Acc {}".format(epoch + 1, loss, correct))
             f.train()
         checkpoint(f, replay_buffer, "last_ckpt.pt", args, device)
 
@@ -488,6 +475,8 @@ if __name__ == "__main__":
     parser.add_argument("--req_bn", action="store_true", help="If set, uses BatchNorm in CLAMSNet")
     parser.add_argument("--dropout_rate", type=float, default=0.0)
     parser.add_argument("--act_func", choices=["relu, sigmoid, tanh, lrelu"], default="lrelu")
+
+    parser.add_argument("--class_drop", type=int, default=-1, help="drop the class for ood detection")
 
     args = parser.parse_args()
 
