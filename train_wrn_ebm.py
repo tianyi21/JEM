@@ -395,7 +395,7 @@ def main(args):
             cur_iter += 1
 
         if epoch % args.ckpt_every == 0:
-            checkpoint(f, replay_buffer, f'ckpt_{epoch}.pt', args, device)
+            checkpoint(f, replay_buffer, "ckpt_{}_{}.pt".format(epoch + 1, args.class_drop), args, device)
 
         if epoch % args.eval_every == 0 and (args.p_y_given_x_weight > 0 or args.p_x_y_weight > 0):
             f.eval()
@@ -409,13 +409,13 @@ def main(args):
                 if correct > best_valid_acc:
                     best_valid_acc = correct
                     print("Best Valid!: {}".format(correct))
-                    checkpoint(f, replay_buffer, "best_valid_ckpt.pt", args, device)
+                    checkpoint(f, replay_buffer, "best_valid_ckpt_ood_{}.pt".format(args.class_drop), args, device)
                 # test set
                 if args.class_drop == -1:
                     correct, loss = eval_classification(f, dload_test, device, args.backbone, epoch, "test")
                     print("Epoch {}: Test Loss {}, Test Acc {}".format(epoch + 1, loss, correct))
             f.train()
-        checkpoint(f, replay_buffer, "last_ckpt.pt", args, device)
+        checkpoint(f, replay_buffer, "last_ckpt_ood_{}.pt".format(args.class_drop), args, device)
 
 
 
