@@ -4,14 +4,16 @@ import torch.nn as nn
 
 
 def activation_function(act_func):
-    if act_func.lower() == "relu":
+    if act_func == "relu":
         return nn.ReLU
-    elif act_func.lower() == "tanh":
+    elif act_func == "tanh":
         return nn.Tanh
-    elif act_func.lower() == "sigmoid":
+    elif act_func == "sigmoid":
         return nn.Sigmoid
-    elif act_func.lower() == "lrelu":
+    elif act_func == "lrelu":
         return nn.LeakyReLU
+    elif act_func == "elu":
+        return nn.ELU
     else:
         raise ValueError("Invalid activation function.")
 

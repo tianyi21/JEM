@@ -394,7 +394,7 @@ def main(args):
             optim.step()
             cur_iter += 1
 
-        if epoch % args.ckpt_every == 0:
+        if epoch % args.ckpt_every and args.checkpoint == 0:
             checkpoint(f, replay_buffer, "ckpt_{}_{}.pt".format(epoch + 1, args.class_drop), args, device)
 
         if epoch % args.eval_every == 0 and (args.p_y_given_x_weight > 0 or args.p_x_y_weight > 0):
@@ -409,13 +409,15 @@ def main(args):
                 if correct > best_valid_acc:
                     best_valid_acc = correct
                     print("Best Valid!: {}".format(correct))
-                    checkpoint(f, replay_buffer, "best_valid_ckpt_ood_{}.pt".format(args.class_drop), args, device)
+                    if args.checkpoint:
+                        checkpoint(f, replay_buffer, "best_valid_ckpt_ood_{}.pt".format(args.class_drop), args, device)
                 # test set
                 if args.class_drop == -1:
                     correct, loss = eval_classification(f, dload_test, device, args.backbone, epoch, "test")
                     print("Epoch {}: Test Loss {}, Test Acc {}".format(epoch + 1, loss, correct))
             f.train()
-        checkpoint(f, replay_buffer, "last_ckpt_ood_{}.pt".format(args.class_drop), args, device)
+        if args.checkpoint:
+            checkpoint(f, replay_buffer, "last_ckpt_ood_{}.pt".format(args.class_drop), args, device)
 
 
 
@@ -475,9 +477,10 @@ if __name__ == "__main__":
     parser.add_argument("--num_block", nargs="+", type=int, help="For resnet backbone only: number of block per layer")
     parser.add_argument("--req_bn", action="store_true", help="If set, uses BatchNorm in CLAMSNet")
     parser.add_argument("--dropout_rate", type=float, default=0.0)
-    parser.add_argument("--act_func", choices=["relu, sigmoid, tanh, lrelu"], default="lrelu")
+    parser.add_argument("--act_func", choices=["relu", "sigmoid", "tanh", "elu", "lrelu"], default="lrelu")
 
     parser.add_argument("--class_drop", type=int, default=-1, help="drop the class for ood detection")
+    parser.add_argument("--checkpoint", action="store_true", help="If set, save checkpoint")
 
     args = parser.parse_args()
 
