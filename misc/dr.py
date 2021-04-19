@@ -19,7 +19,7 @@ def plot_dr(adata_path, umap_path):
         plt.scatter(umap_emb[list(adata.obs["bulk_labels"] == cls), 0], umap_emb[list(adata.obs["bulk_labels"] == cls), 1], label=cls, s=0.2)
     plt.legend()
     plt.title("UMAP Embedding")
-    plt.savefig("../fig/umap.pdf")
+    plt.savefig("../img/umap.pdf")
 
 
 if __name__ == "__main__":
