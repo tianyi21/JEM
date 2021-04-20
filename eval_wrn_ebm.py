@@ -580,7 +580,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_block", nargs="+", type=int, default=None, help="For resnet backbone only: number of block per layer")
     parser.add_argument("--req_bn", action="store_true", help="If set, uses BatchNorm in CLAMSNet")
     parser.add_argument("--dropout_rate", type=float, default=0.0)
-    parser.add_argument("--act_func", choices=["relu", "sigmoid", "tanh", "lrelu", "elu"], default="lrelu")
+    parser.add_argument("--act_func", choices=["relu", "sigmoid", "tanh", "lrelu", "elu"], default="elu")
 
     parser.add_argument("--rset", type=str, choices=["train", "test", "valid", "ood", "test+ood"], default="train", help="OODAUC real dateset")
     parser.add_argument("--fset", nargs="+", type=str, default=["test+ood"], choices=["train", "test", "valid", "ood", "test+ood"], help="OODAUC fake dataset")

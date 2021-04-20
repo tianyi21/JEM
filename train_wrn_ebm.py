@@ -480,7 +480,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_block", nargs="+", type=int, help="For resnet backbone only: number of block per layer")
     parser.add_argument("--req_bn", action="store_true", help="If set, uses BatchNorm in CLAMSNet")
     parser.add_argument("--dropout_rate", type=float, default=0.0)
-    parser.add_argument("--act_func", choices=["relu", "sigmoid", "tanh", "elu", "lrelu"], default="lrelu")
+    parser.add_argument("--act_func", choices=["relu", "sigmoid", "tanh", "elu", "lrelu"], default="elu")
 
     parser.add_argument("--class_drop", type=int, default=-1, help="drop the class for ood detection")
     parser.add_argument("--checkpoint", action="store_true", help="If set, save checkpoint")
