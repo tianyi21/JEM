@@ -315,16 +315,16 @@ def OODAUC(f, args, device):
     dload_real = DataLoader(dset_real, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=False)
 
     print("Calculating real scores\n")
-    predicted_vals = []
-    for x, _ in dload_real:
-        x = x.to(device)
-        predicted_vals.extend(x)
-
     all_scores = dict()
     for score_type in args.score_fn:
-        scores = score_fn(predicted_vals, score_type=score_type)
+        real_scores = []
+        for x, _ in dload_real:
+            x = x.to(device)
+            scores = score_fn(x, score_type=score_type)
+            real_scores.extend(scores.numpy())
+
         # save the scores with the rset value as key
-        all_scores[args.rset + "_" + score_type] = scores
+        all_scores[args.rset + "_" + score_type] = real_scores
 
     # we are differentiating vs these scores
     for ds in args.fset:
@@ -332,16 +332,14 @@ def OODAUC(f, args, device):
         dset_fake = return_set(db, ds, set_split_dict)
         dload_fake = DataLoader(dset_fake, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=False)
         print("Calculating fake scores for {}\n".format(ds))
-
-        predicted_vals = []
-        for x, _ in dload_fake:
-            x = x.to(device)
-            predicted_vals.extend(x)
-
         for score_type in args.score_fn:
-            scores = score_fn(predicted_vals, score_type=score_type)
-            # print(scores.mean())
-            all_scores[ds + '_' + score_type] = scores
+            fake_scores = []
+            for x, _ in dload_fake:
+                x = x.to(device)
+                scores = score_fn(x, score_type=score_type)
+                fake_scores.extend(scores.numpy())
+                # print(scores.mean())
+            all_scores[ds + '_' + score_type] = fake_scores
             # Create a histogram for fake scores
 
     # plot histogram
