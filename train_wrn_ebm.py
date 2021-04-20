@@ -280,7 +280,7 @@ def plot_cm(y_p_d, logits, cm_normalize, correct, backbone, class_drop, set="tes
     plot_label = sorted(np.unique(np.concatenate((batch_label_uniq, pred_class_uniq))))
     plt.xticks(range(len(plot_label)), LABEL_RAW[plot_label], rotation=45, horizontalalignment="right")
     plt.yticks(range(len(plot_label)), LABEL_RAW[plot_label])
-    plt.title("CM drop={}, backbone={}, set={}, epoch={}, acc={}".format(backbone, class_drop, set, epoch + 1, _to_percentage(correct)))
+    plt.title("CM drop={}, backbone={}, set={}, epoch={}, acc={}".format(class_drop, backbone, set, epoch + 1, _to_percentage(correct)))
     utils.makedirs("./img")
     plt.savefig("./img/cm_{}_{}_{}_ood_{}.pdf".format(backbone, set, epoch + 1, class_drop))
 
