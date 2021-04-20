@@ -4,7 +4,6 @@ import pickle as pkl
 import anndata
 from sklearn.svm import LinearSVC
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.metrics import accuracy_score, f1_score
 
 
 def pkl_io(mode, path, *args):
@@ -16,25 +15,6 @@ def pkl_io(mode, path, *args):
         with open(path, "rb") as f:
             print("I: read from {}".format(path))
             return pkl.load(f)
-
-
-def svm_rej(clf, ood_set, Threshold=0.7):
-    """
-    Inputs: 
-        - clf: trained and calibrated sklearn SVM classifier model
-        - ood_set: dataset with left out cell class for OOD
-        - Threshold: threshold value for rejection
-    Outputs:
-        - predicted: numpy array of predicted labels and repsective
-                     rejected labels. The rejected entries in 'predicted'
-                     are labeled as 'Unknown'. 
-    """
-    predicted = clf.predict(ood_set)
-    prob = np.max(clf.predict_proba(ood_set), axis = 1)
-    unlabeled = np.where(prob < Threshold)
-    predicted = predicted.astype("object")
-    predicted[unlabeled] = 'Unknown'
-    return predicted
 
 
 if __name__ == "__main__":
@@ -60,18 +40,23 @@ if __name__ == "__main__":
 
     ood_set = db.X[oo, :]
     ood_lab = np.array(db.obs["int_label"][oo]).astype("int")
-
+    
     import time
     tic = time.time()
-
-    print("Start rejection")
-    clf = pkl_io("r", "svm_cal/svm_cal-d8/svm_cal_" + args.split_dict.split("_")[-1])
-    print("OOD score: {}".format(clf.score(ood_set, ood_lab)))
-
-    # rejection procedure
-    pred_rej = svm_rej(clf, ood_set)
-    print(pred_rej)
-
+    print("Start calibrating")
+    #clf = LinearSVC()
+    #pkl_io("r", "svm/svm-d0/svm_" + args.split_dict.split("_")[-1], clf)
+    #clf = pickle.load(open("tuple_model.pkl", 'rb'))
+    clf = pkl_io("r", "svm/svm-d10/svm_" + args.split_dict.split("_")[-1])
+    clf = CalibratedClassifierCV(clf, cv='prefit')
+    clf.fit(valid_set, valid_lab)
     toc = time.time()
-    print("Rejection time: {} s".format(toc - tic))
- 
+    print("Calibration time: {} s".format(toc - tic))
+    
+    pkl_io("w", "svm_cal/svm_cal-d10/svm_cal_" + args.split_dict.split("_")[-1], clf)
+
+    # Print accuracy and f1-scores on validation and test sets
+    print("Valid f1-score: {}".format(f1_score(valid_lab, clf.predict(valid_set), average="macro")))
+    print("Valid accuracy: {}".format(accuracy_score(valid_lab, clf.predict(valid_set))))
+    print("Test f1-score: {}".format(f1_score(test_lab, clf.predict(test_set), average="macro")))
+    print("Test accuracy: {}".format(accuracy_score(test_lab, clf.predict(test_set))))

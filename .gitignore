@@ -7,3 +7,6 @@ data/
 .vscode/
 .idea/
 models/
+svm/
+svm_cal/
+svm_laz.py
