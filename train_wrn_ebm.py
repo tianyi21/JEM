@@ -31,6 +31,7 @@ import json
 from tqdm import tqdm
 import time
 import anndata
+import torch
 
 from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
@@ -164,9 +165,12 @@ def get_model_and_buffer(args, device, sample_q):
 
 def get_data(args):
     def _drop_class(db, n_classes, class_drop):
-        if class_drop >= n_classes:
+        if class_drop >= n_classes + 1:
             raise ValueError("Invalid class index provided")
-        assert n_classes == len(np.unique(db.obs["int_label"]))
+        if class_drop != -1:
+            assert (n_classes + 1) == len(np.unique(db.obs["int_label"]))
+        else:
+            assert n_classes == len(np.unique(db.obs["int_label"]))
         if class_drop < 0:
             return list(range(len(db))), []
         print("Dropping class {} (index={}) for OOD.".format(LABEL_RAW[class_drop], class_drop))
@@ -254,6 +258,7 @@ def eval_classification(f, dload, device, backbone, class_drop, set, epoch=0, cm
     ys, preds = [], []
     for x_p_d, y_p_d in dload:
         x_p_d, y_p_d = x_p_d.to(device), y_p_d.to(device)
+        y_p_d = utils.convert_label(class_drop, y_p_d, mode="r2t")
         logits = f.classify(x_p_d)
         loss = nn.CrossEntropyLoss(reduce=False)(logits, y_p_d).cpu().numpy()
         losses.extend(loss)
@@ -269,18 +274,16 @@ def eval_classification(f, dload, device, backbone, class_drop, set, epoch=0, cm
 
 
 def plot_cm(y_p_d, logits, cm_normalize, correct, backbone, class_drop, set="test", epoch=0):
-    def _to_percentage(dec):
-        return str(np.round(dec * 100, 2)) + " %"
-
     cm = confusion_matrix(y_p_d, logits, normalize=cm_normalize)
     plt.imshow(cm)
     # sanity check
     batch_label_uniq = sorted(np.unique(y_p_d))
     pred_class_uniq = sorted(np.unique(logits))
-    plot_label = sorted(np.unique(np.concatenate((batch_label_uniq, pred_class_uniq))))
+    plot_label = np.sort(np.unique(np.concatenate((batch_label_uniq, pred_class_uniq))))
+    plot_label = utils.convert_label(class_drop, plot_label, mode="t2r")
     plt.xticks(range(len(plot_label)), LABEL_RAW[plot_label], rotation=45, horizontalalignment="right")
     plt.yticks(range(len(plot_label)), LABEL_RAW[plot_label])
-    plt.title("CM drop={}, backbone={}, set={}, epoch={}, acc={}".format(class_drop, backbone, set, epoch + 1, _to_percentage(correct)))
+    plt.title("CM drop={}, backbone={}, set={}, epoch={}, acc={}".format(class_drop, backbone, set, epoch + 1, utils.to_percentage(correct)))
     utils.makedirs("./img")
     plt.savefig("./img/cm_{}_{}_{}_ood_{}.pdf".format(backbone, set, epoch + 1, class_drop))
 
@@ -338,6 +341,7 @@ def main(args):
 
             x_p_d = x_p_d.to(device)
             x_lab, y_lab = dload_train_labeled.__next__()
+            y_lab = utils.convert_label(args.class_drop, y_lab, mode="r2t")
             x_lab, y_lab = x_lab.to(device), y_lab.to(device)
 
             L = 0.
@@ -386,8 +390,7 @@ def main(args):
 
             # break if the loss diverged...easier for poppa to run experiments this way
             if L.abs().item() > 1e8:
-                print("BAD BOIIIIIIIIII")
-                1/0
+                raise Exception("BAD BOIIIIIIIIII")
 
             optim.zero_grad()
             L.backward()
@@ -469,7 +472,7 @@ if __name__ == "__main__":
     parser.add_argument("--plot_uncond", action="store_true", help="If set, save unconditional samples")
     parser.add_argument("--n_valid", type=int, default=5000)
     parser.add_argument("--n_test", type=int, default=5000)
-    parser.add_argument("--n_classes", type=int, default=11)
+    parser.add_argument("--n_classes", type=int, default=10)
 
     # CLAMSNet arch
     parser.add_argument("--backbone", choices=["resnet", "mlp"], required=True)
@@ -477,7 +480,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_block", nargs="+", type=int, help="For resnet backbone only: number of block per layer")
     parser.add_argument("--req_bn", action="store_true", help="If set, uses BatchNorm in CLAMSNet")
     parser.add_argument("--dropout_rate", type=float, default=0.0)
-    parser.add_argument("--act_func", choices=["relu", "sigmoid", "tanh", "elu", "lrelu"], default="lrelu")
+    parser.add_argument("--act_func", choices=["relu", "sigmoid", "tanh", "elu", "lrelu"], default="elu")
 
     parser.add_argument("--class_drop", type=int, default=-1, help="drop the class for ood detection")
     parser.add_argument("--checkpoint", action="store_true", help="If set, save checkpoint")

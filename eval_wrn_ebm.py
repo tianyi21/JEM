@@ -26,6 +26,8 @@ import time
 import matplotlib.pyplot as plt
 import seaborn as sns
 import sklearn.metrics
+from scipy.special import softmax
+from sklearn.calibration import CalibratedClassifierCV
 
 from tqdm import tqdm
 # Sampling
@@ -198,24 +200,45 @@ def cond_samples(f, replay_buffer, args, device, fresh=False):
     utils.pkl_io("w", "./samples/cond.pkl", tmp)
 
 
-def return_set(db, set, set_split_dict):
+def return_set(db, set, set_split_dict, clf=False):
     train_inds, valid_inds, test_inds, ood_inds = set_split_dict.values()
     print("Split Dict:\tTrain: {}\tValid: {}\tTest:{}\tOOD: {}".format(len(train_inds), len(valid_inds), len(test_inds), len(ood_inds)))
-    if set == "test+ood":
-        # default, test in ttv + ood
-        dataset = DataSubset(SingleCellDataset(db), inds=(test_inds + ood_inds))
-    elif set == "ood":
-        dataset = DataSubset(SingleCellDataset(db), inds=ood_inds)
-    elif set == "test":
-        dataset = DataSubset(SingleCellDataset(db), inds=test_inds)
-    elif set == "train":
-        dataset = DataSubset(SingleCellDataset(db), inds=train_inds)
-    elif set == "valid":
-        dataset = DataSubset(SingleCellDataset(db), inds=valid_inds)
+    if not clf:
+        if set == "test+ood":
+            # default, test in ttv + ood
+            dataset = DataSubset(SingleCellDataset(db), inds=(test_inds + ood_inds))
+        elif set == "ood":
+            dataset = DataSubset(SingleCellDataset(db), inds=ood_inds)
+        elif set == "test":
+            dataset = DataSubset(SingleCellDataset(db), inds=test_inds)
+        elif set == "train":
+            dataset = DataSubset(SingleCellDataset(db), inds=train_inds)
+        elif set == "valid":
+            dataset = DataSubset(SingleCellDataset(db), inds=valid_inds)
+        else:
+            raise ValueError
+        print("{} set retrived for OOD".format(set))
+        return dataset
     else:
-        raise ValueError
-    print("{} set retrived for OOD".format(set))
-    return dataset
+        if set == "test+ood":
+            data = db.X[test_inds + ood_inds, :]
+            label = np.array(db.obs["int_label"][test_inds + ood_inds]).astype("int")
+        elif set == "ood":
+            data = db.X[ood_inds, :]
+            label = np.array(db.obs["int_label"][ood_inds]).astype("int")
+        elif set == "test":
+            data = db.X[test_inds, :]
+            label = np.array(db.obs["int_label"][test_inds]).astype("int")
+        elif set == "train":
+            data = db.X[train_inds, :]
+            label = np.array(db.obs["int_label"][train_inds]).astype("int")
+        elif set == "valid":
+            data = db.X[valid_inds, :]
+            label = np.array(db.obs["int_label"][valid_inds]).astype("int")
+        else:
+            raise ValueError
+        print("{} set retrived for OOD".format(set))
+        return data, label
 
 
 def logp_hist(f, args, device):
@@ -442,6 +465,87 @@ def test_clf(f, args, device):
     print(loss, correct)
 
 
+def jem_calib(f, args, device):
+    if not os.path.isfile(args.split_dict):
+        raise FileNotFoundError("set split not found.")
+    set_split_dict = utils.pkl_io("r", args.split_dict)
+    db = utils.pkl_io("r", args.dataset)
+    dset = return_set(db, args.calibset, set_split_dict)
+    dload = DataLoader(dset, batch_size=args.batch_size, shuffle=False, num_workers=4, drop_last=False)
+    
+    conf = []
+    acc = []
+    for x, y in dload:
+        x = x.to(device)
+        if args.calibset in ["train", "valid", "test"]:
+            y = utils.convert_label(args.class_drop, y, "r2t")
+        logits = nn.Softmax(dim=1)(f.classify(x)).max(1)
+        conf.extend(logits[0].detach().cpu().numpy())
+        acc.extend((logits[1].detach().cpu().numpy() == y.cpu().numpy()).astype("int"))
+    return np.array(conf), np.array(acc)
+
+
+def clf_calib(args):
+    if not os.path.isfile(args.split_dict):
+        raise FileNotFoundError("set split not found.")
+    set_split_dict = utils.pkl_io("r", args.split_dict)
+    db = utils.pkl_io("r", args.dataset)
+    data, label = return_set(db, args.calibset, set_split_dict, True)
+    clf = utils.pkl_io("r", args.clf_path)
+    acc = (clf.predict(data) == label).astype("int")
+    conf = np.max(softmax(clf.decision_function(data), axis=1),axis=1)
+    return np.array(conf), np.array(acc)
+
+
+def calibration(f, args, device):
+    def calib_bar(conf_sorted, acc_sorted, num_chunk):
+        assert len(conf_sorted) == len(acc_sorted)
+        count, xval = np.histogram(conf_sorted, range=(0, 1), bins=num_chunk)
+        cummulate_count = 0
+        conf_avg = []
+        for i in count:
+            if i == 0:
+                conf_avg.append(0)
+            else:
+                conf_avg.append(np.average(acc_sorted[cummulate_count:cummulate_count+i]))
+                cummulate_count += i
+        return conf_avg, count, xval
+
+    def cal_ece(conf_avg, count, acc_sorted):
+        cummulate_count = 0
+        ece = 0
+        for step, i in enumerate(count):
+            if i == 0:
+                # sanity check
+                assert conf_avg[step] == 0
+                continue
+            else:
+                ece += i * np.abs(np.average(acc_sorted[cummulate_count:cummulate_count+i])- conf_avg[step])
+        return ece / len(acc_sorted)
+
+    def calib_plot(conf_avg, ece, xval, calibmodel, class_drop):
+        xval = xval[:len(xval)-1]
+        plt.bar(xval, conf_avg, width=1/len(conf_avg), align="edge")
+        plt.plot([0,1], [0,1], "r--")
+        plt.title("Calibration ECE={}".format(utils.to_percentage(ece)))
+        plt.xlabel("Confidence")
+        plt.ylabel("Accuracy")
+        plt.savefig("./img/calib_{}_ood_{}.pdf".format(calibmodel, class_drop))
+        # plt.show()
+    
+    if args.calibmodel == "jem":
+        conf, acc = jem_calib(f, args, device)
+    else:
+        conf, acc = clf_calib(args)
+
+    idx = np.argsort(conf)
+    conf_sorted = conf[idx]
+    acc_sorted = acc[idx]
+    conf_avg, count, xval = calib_bar(conf_sorted, acc_sorted, args.num_chunk)
+    ece = cal_ece(conf_avg, count, acc_sorted)
+    calib_plot(conf_avg, ece, xval, args.calibmodel, args.class_drop)
+
+
 def main(args):
     utils.makedirs(args.save_dir)
     if args.print_to_log:
@@ -462,6 +566,7 @@ def main(args):
     f.load_state_dict(ckpt_dict["model_state_dict"])
     replay_buffer = ckpt_dict["replay_buffer"]
     class_drop = ckpt_dict["class_drop"]
+    assert class_drop == args.class_drop
 
     f = f.to(device)
 
@@ -480,12 +585,15 @@ def main(args):
     if args.eval == "logp_hist":
         logp_hist(f, args, device)
 
+    if args.eval == "calib":
+        calibration(f, args, device)
+
 
 if __name__ == "__main__":
     __spec__ = None
     parser = argparse.ArgumentParser("Energy Based Models and Shit")
     parser.add_argument("--eval", default="OOD", type=str,
-                        choices=["uncond_samples", "cond_samples", "logp_hist", "OOD", "test_clf"])
+                        choices=["uncond_samples", "cond_samples", "logp_hist", "OOD", "test_clf", "calib"])
     parser.add_argument("--score_fn", default=["px", "py", "pxgrad", "pxy"], type=str, nargs="+",
                         help="For OODAUC, chooses what score function we use.")
     parser.add_argument("--dataset", type=str) # path to anndata
@@ -522,14 +630,18 @@ if __name__ == "__main__":
     parser.add_argument("--num_block", nargs="+", type=int, default=None, help="For resnet backbone only: number of block per layer")
     parser.add_argument("--req_bn", action="store_true", help="If set, uses BatchNorm in CLAMSNet")
     parser.add_argument("--dropout_rate", type=float, default=0.0)
-    parser.add_argument("--act_func", choices=["relu", "sigmoid", "tanh", "lrelu", "elu"], default="lrelu")
+    parser.add_argument("--act_func", choices=["relu", "sigmoid", "tanh", "lrelu", "elu"], default="elu")
 
     parser.add_argument("--rset", type=str, choices=["train", "test", "valid", "ood", "test+ood"], default="train", help="OODAUC real dateset")
     parser.add_argument("--fset", nargs="+", type=str, default=["test+ood"], choices=["train", "test", "valid", "ood", "test+ood"], help="OODAUC fake dataset")
     parser.add_argument("--clfset", type=str, choices=["train", "test", "valid", "ood", "test+ood"], help="test_clf dataset")
     parser.add_argument("--logpset", type=str, choices=["train", "test", "valid", "ood", "test+ood"], default="ood+test", help="test_clf dataset")
-    
+    parser.add_argument("--calibset", type=str, choices=["train", "test", "valid", "ood", "test+ood"], default="train", help="calibration dataset")
+    parser.add_argument("--num_chunk", type=int, default=20, help="number of chunks in calibration")
+    parser.add_argument("--class_drop", type=int, default=-1, help="drop the class for ood detection")
     parser.add_argument("--split_dict", type=str, help="path to split dict")
+    parser.add_argument("--calibmodel", choices=["jem", "clf"], help="use either JEM or clf to plot calibration")
+    parser.add_argument("--clf_path", type=str, help="path to clf if calibmodel=clf") 
 
     args = parser.parse_args()
 
