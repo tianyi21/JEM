@@ -433,6 +433,69 @@ def test_clf(f, args, device):
     print(loss, correct)
 
 
+def jem_calib(f, args, device):
+    if not os.path.isfile(args.split_dict):
+        raise FileNotFoundError("set split not found.")
+    set_split_dict = utils.pkl_io("r", args.split_dict)
+    db = utils.pkl_io("r", args.dataset)
+    dset = return_set(db, args.calibset, set_split_dict)
+    dload = DataLoader(dset, batch_size=args.batch_size, shuffle=False, num_workers=4, drop_last=False)
+    
+    conf = []
+    acc = []
+    for x, y in dload:
+        x = x.to(device)
+        if args.calibset in ["train", "valid", "test"]:
+            y = utils.convert_label(args.class_drop, y, "r2t")
+        logits = nn.Softmax(dim=1)(f.classify(x)).max(1)
+        conf.extend(logits[0].detach().cpu().numpy())
+        acc.extend((logits[1].detach().cpu().numpy() == y.cpu().numpy()).astype("int"))
+    return np.array(conf), np.array(acc)
+
+
+def calibration(f, args, device):
+    def calib_bar(conf_sorted, acc_sorted, num_chunk):
+        assert len(conf_sorted) == len(acc_sorted)
+        count, xval = np.histogram(conf_sorted, range=(0, 1), bins=num_chunk)
+        cummulate_count = 0
+        conf_avg = []
+        for i in count:
+            if i == 0:
+                conf_avg.append(0)
+            else:
+                conf_avg.append(np.average(acc_sorted[cummulate_count:cummulate_count+i]))
+                cummulate_count += i
+        return conf_avg, count, xval
+
+    def cal_ece(conf_avg, count, acc_sorted):
+        cummulate_count = 0
+        ece = 0
+        for step, i in enumerate(count):
+            if i == 0:
+                # sanity check
+                assert conf_avg[step] == 0
+                continue
+            else:
+                ece += i * np.abs(np.average(acc_sorted[cummulate_count:cummulate_count+i])- conf_avg[step])
+        return ece / len(acc_sorted)
+
+    def calib_plot(conf_avg, ece, xval, class_drop):
+        xval = xval[:len(xval)-1]
+        plt.bar(xval, conf_avg, width=1/len(conf_avg), align="edge")
+        plt.plot([0,1], [0,1], "r--")
+        plt.title("Calibration ECE={}".format(utils.to_percentage(ece)))
+        plt.savefig("./img/calib_ood_{}.pdf".format(class_drop))
+        # plt.show()
+    
+    conf, acc = jem_calib(f, args, device)
+    idx = np.argsort(conf)
+    conf_sorted = conf[idx]
+    acc_sorted = acc[idx]
+    conf_avg, count, xval = calib_bar(conf_sorted, acc_sorted, args.num_chunk)
+    ece = cal_ece(conf_avg, count, acc_sorted)
+    calib_plot(conf_avg, ece, xval, args.class_drop)
+
+
 def main(args):
     utils.makedirs(args.save_dir)
     if args.print_to_log:
@@ -453,6 +516,7 @@ def main(args):
     f.load_state_dict(ckpt_dict["model_state_dict"])
     replay_buffer = ckpt_dict["replay_buffer"]
     class_drop = ckpt_dict["class_drop"]
+    assert class_drop == args.class_drop
 
     f = f.to(device)
 
@@ -471,12 +535,15 @@ def main(args):
     if args.eval == "logp_hist":
         logp_hist(f, args, device)
 
+    if args.eval == "calib":
+        calibration(f, args, device)
+
 
 if __name__ == "__main__":
     __spec__ = None
     parser = argparse.ArgumentParser("Energy Based Models and Shit")
     parser.add_argument("--eval", default="OOD", type=str,
-                        choices=["uncond_samples", "cond_samples", "logp_hist", "OOD", "test_clf"])
+                        choices=["uncond_samples", "cond_samples", "logp_hist", "OOD", "test_clf", "calib"])
     parser.add_argument("--score_fn", default=["px", "py", "pxgrad", "pxy"], type=str, nargs="+",
                         help="For OODAUC, chooses what score function we use.")
     parser.add_argument("--dataset", type=str) # path to anndata
@@ -519,7 +586,9 @@ if __name__ == "__main__":
     parser.add_argument("--fset", nargs="+", type=str, default=["test+ood"], choices=["train", "test", "valid", "ood", "test+ood"], help="OODAUC fake dataset")
     parser.add_argument("--clfset", type=str, choices=["train", "test", "valid", "ood", "test+ood"], help="test_clf dataset")
     parser.add_argument("--logpset", type=str, choices=["train", "test", "valid", "ood", "test+ood"], default="ood+test", help="test_clf dataset")
-    
+    parser.add_argument("--calibset", type=str, choices=["train", "test", "valid", "ood", "test+ood"], default="train", help="calibration dataset")
+    parser.add_argument("--num_chunk", type=int, default=20, help="number of chunks in calibration")
+    parser.add_argument("--class_drop", type=int, default=-1, help="drop the class for ood detection")
     parser.add_argument("--split_dict", type=str, help="path to split dict")
 
     args = parser.parse_args()
