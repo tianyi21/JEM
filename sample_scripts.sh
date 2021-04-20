@@ -42,4 +42,4 @@ python eval_wrn_ebm.py --dataset ~/Desktop/pbmc_filtered.pkl --n_classes 11 --ba
 """
 python eval_wrn_ebm.py --dataset ~/Desktop/pbmc_filtered.pkl --n_classes 11 --backbone mlp --arch 500 200 --rset train --fset test ood --split_dict ./experiment/set_split_idx_ood_1.pkl --load_path PATH_TO_best_valid_ckpt_ood_[0-10].pt
 """
-python eval_wrn_ebm2.py --dataset ./data/pbmc_filtered.pkl --n_classes 11 --backbone resnet --arch 800 200 --rset train --fset test ood --split_dict models/res-d0/experiment/set_split_idx_ood_0.pkl --load_path ./models/res-d0/experiment/best_valid_ckpt_ood_0.pt --num_block 2 4
+python eval_wrn_ebm.py --dataset ./data/pbmc_filtered.pkl --n_classes 11 --backbone resnet --arch 800 200 --rset test --fset ood --split_dict models/res-d0/experiment/set_split_idx_ood_0.pkl --load_path ./models/res-d0/experiment/best_valid_ckpt_ood_0.pt --num_block 2 4 --score_fn pxy px py pxgrad

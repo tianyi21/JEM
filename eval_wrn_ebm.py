@@ -284,7 +284,7 @@ def OODAUC(f, args, device):
     sns.set()
     sns.set_context('talk')
     def score_fn(x, score_type='px'):
-        permitted_score_types = ["px", "py", "pxgrad", "pxy"]
+        permitted_score_types = ["px", "py", "pxgrad", "pxy", "pxygrad"]
         assert score_type in permitted_score_types, f"score function needs to be in {permitted_score_types}"
         # pdb.set_trace()
         if score_type == "px":
@@ -294,14 +294,21 @@ def OODAUC(f, args, device):
         elif score_type == 'pxgrad':
             return -grad_norm(x).detach().cpu()
         elif score_type == 'pxy':
-            return - nn.Softmax()(f.classify(x)).max(1)[0].detach().cpu() * f(x).detach().cpu()
+            return pxy(x).detach().cpu()
+        elif score_type == 'pxygrad':
+            return -grad_norm(x, fn=pxy).detach().cpu()
         else:
             raise ValueError
 
+    def pxy(x):
+        py = - nn.Softmax()(f.classify(x)).max(1)[0]
+        px = f(x)
+        return px * py
+
     # JEM grad norm function
-    def grad_norm(x):
+    def grad_norm(x ,fn=f):
         x_k = t.autograd.Variable(x, requires_grad=True)
-        f_prime = t.autograd.grad(f(x_k).sum(), [x_k], retain_graph=True)[0]
+        f_prime = t.autograd.grad(fn(x_k).sum(), [x_k], retain_graph=True)[0]
         grad = f_prime.view(x.size(0), -1)
         return grad.norm(p=2, dim=1)
 
@@ -357,25 +364,27 @@ def OODAUC(f, args, device):
             plt.hist(all_scores[dataset + '_' + score_type],
                      density=True, label=dataset, bins=100, alpha=.5, fill='black', lw=0)
         plt.legend()
-        if score_type == "px":
-            plt.xlim(0, 20)
-        elif score_type == "pxgrad":
-            plt.xlim(-5, 0)
-        elif score_type == "pxy":
-            plt.xlim(0, 20)
-        elif score_type == "py":
-            plt.xlim(0.7, 1)
+        # if score_type == "px":
+        #     plt.xlim(0, 20)
+        # elif score_type == "pxgrad":
+        #     plt.xlim(-5, 0)
+        # elif score_type == "pxy":
+        #     plt.xlim(0, 20)
+        # elif score_type == "py":
+        #     plt.xlim(0.7, 1)
 
         plt.title(f"Histogram of OOD detection {score_type}")
         plt.savefig(f"./img/OOD_hist_{score_type}.pdf")
         plt.close()
     # for every fake dataset make an ROC plot
-    for score_type in args.score_fn:
+    for dataset_name in args.fset:
         plt.figure(figsize=(10, 10))
 
-        real_labels = np.ones_like(all_scores[args.rset + "_" + score_type])
-        for dataset_name in args.fset:
+        for score_type in args.score_fn:
+            # make labels
+            real_labels = np.ones_like(all_scores[args.rset + "_" + score_type])
             fake_labels = np.zeros_like(all_scores[dataset_name + "_" + score_type])
+
             labels = np.concatenate([real_labels, fake_labels])
             scores = np.concatenate([
                 all_scores[args.rset + "_" + score_type],
@@ -383,15 +392,15 @@ def OODAUC(f, args, device):
             ])
             fpr, tpr, thresholds = sklearn.metrics.roc_curve(labels, scores)
             auc_value = sklearn.metrics.auc(fpr, tpr)
-            plt.step(fpr, tpr, where='post', label=f'{dataset_name} AUC: {round(auc_value, 3)}')
+            plt.step(fpr, tpr, where='post', label=f'{score_type} AUC: {round(auc_value, 3)}')
         plt.xlabel('FPR')
         plt.ylabel('TPR')
         plt.ylim([0.0, 1.01])
         plt.xlim([0.0, 1.01])
-        plt.title(f"Reciever Operating Characteristic (ROC)\n Plot OOD detection {score_type}")
+        plt.title(f"Reciever Operating Characteristic (ROC)\n Plot OOD detection {dataset_name}")
         plt.legend()
         plt.tight_layout()
-        plt.savefig(f"./img/OOD_roc_{score_type}.pdf")
+        plt.savefig(f"./img/OOD_roc_{dataset_name}.pdf")
         plt.close()
 
 
