@@ -17,6 +17,7 @@ import os
 import logging
 import torch
 import pickle as pkl
+import numpy as np
 
 def makedirs(dirname):
     if not os.path.exists(dirname):
@@ -120,3 +121,16 @@ def pkl_io(mode, path, *args):
         with open(path, "rb") as f:
             print("I: read from {}".format(path))
             return pkl.load(f)
+
+
+def convert_label(class_drop, y_label, mode):
+    if mode == "r2t":
+        # raw 11 to training 10
+        return torch.where(y_label < class_drop, y_label, y_label - 1)
+    elif mode == "t2r":
+        # training 10 to raw 11 for cm plot
+        return np.where(np.array(y_label) < class_drop, y_label, y_label + 1)
+
+
+def to_percentage(dec, pos=2):
+    return str(np.round(dec * 100, pos)) + " %"
