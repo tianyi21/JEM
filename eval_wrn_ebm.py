@@ -27,6 +27,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import sklearn.metrics
 from scipy.special import softmax
+from sklearn.calibration import CalibratedClassifierCV
 
 from tqdm import tqdm
 # Sampling
@@ -518,6 +519,8 @@ def calibration(f, args, device):
         plt.bar(xval, conf_avg, width=1/len(conf_avg), align="edge")
         plt.plot([0,1], [0,1], "r--")
         plt.title("Calibration ECE={}".format(utils.to_percentage(ece)))
+        plt.xlabel("Confidence")
+        plt.ylabel("Accuracy")
         plt.savefig("./img/calib_{}_ood_{}.pdf".format(calibmodel, class_drop))
         # plt.show()
     
