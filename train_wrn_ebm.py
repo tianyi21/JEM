@@ -258,7 +258,7 @@ def eval_classification(f, dload, device, backbone, class_drop, set, epoch=0, cm
     ys, preds = [], []
     for x_p_d, y_p_d in dload:
         x_p_d, y_p_d = x_p_d.to(device), y_p_d.to(device)
-        y_p_d = convert_label(class_drop, y_p_d, mode="r2t")
+        y_p_d = utils.convert_label(class_drop, y_p_d, mode="r2t")
         logits = f.classify(x_p_d)
         loss = nn.CrossEntropyLoss(reduce=False)(logits, y_p_d).cpu().numpy()
         losses.extend(loss)
@@ -274,18 +274,16 @@ def eval_classification(f, dload, device, backbone, class_drop, set, epoch=0, cm
 
 
 def plot_cm(y_p_d, logits, cm_normalize, correct, backbone, class_drop, set="test", epoch=0):
-    def _to_percentage(dec):
-        return str(np.round(dec * 100, 2)) + " %"
     cm = confusion_matrix(y_p_d, logits, normalize=cm_normalize)
     plt.imshow(cm)
     # sanity check
     batch_label_uniq = sorted(np.unique(y_p_d))
     pred_class_uniq = sorted(np.unique(logits))
     plot_label = np.sort(np.unique(np.concatenate((batch_label_uniq, pred_class_uniq))))
-    plot_label = convert_label(class_drop, plot_label, mode="t2r")
+    plot_label = utils.convert_label(class_drop, plot_label, mode="t2r")
     plt.xticks(range(len(plot_label)), LABEL_RAW[plot_label], rotation=45, horizontalalignment="right")
     plt.yticks(range(len(plot_label)), LABEL_RAW[plot_label])
-    plt.title("CM drop={}, backbone={}, set={}, epoch={}, acc={}".format(class_drop, backbone, set, epoch + 1, _to_percentage(correct)))
+    plt.title("CM drop={}, backbone={}, set={}, epoch={}, acc={}".format(class_drop, backbone, set, epoch + 1, utils.to_percentage(correct)))
     utils.makedirs("./img")
     plt.savefig("./img/cm_{}_{}_{}_ood_{}.pdf".format(backbone, set, epoch + 1, class_drop))
 
@@ -299,15 +297,6 @@ def checkpoint(f, buffer, tag, args, device):
     }
     t.save(ckpt_dict, os.path.join(args.save_dir, tag))
     f.to(device)
-
-
-def convert_label(class_drop, y_label, mode):
-    if mode == "r2t":
-        # raw 11 to training 10
-        return torch.where(y_label < class_drop, y_label, y_label - 1)
-    elif mode == "t2r":
-        # training 10 to raw 11 for cm plot
-        return np.where(np.array(y_label) < class_drop, y_label, y_label + 1)
 
 
 def main(args):
@@ -352,7 +341,7 @@ def main(args):
 
             x_p_d = x_p_d.to(device)
             x_lab, y_lab = dload_train_labeled.__next__()
-            y_lab = convert_label(args.class_drop, y_lab, mode="r2t")
+            y_lab = utils.convert_label(args.class_drop, y_lab, mode="r2t")
             x_lab, y_lab = x_lab.to(device), y_lab.to(device)
 
             L = 0.
