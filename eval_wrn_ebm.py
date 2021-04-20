@@ -26,6 +26,7 @@ import time
 import matplotlib.pyplot as plt
 import seaborn as sns
 import sklearn.metrics
+from scipy.special import softmax
 
 from tqdm import tqdm
 # Sampling
@@ -198,24 +199,45 @@ def cond_samples(f, replay_buffer, args, device, fresh=False):
     utils.pkl_io("w", "./samples/cond.pkl", tmp)
 
 
-def return_set(db, set, set_split_dict):
+def return_set(db, set, set_split_dict, clf=False):
     train_inds, valid_inds, test_inds, ood_inds = set_split_dict.values()
     print("Split Dict:\tTrain: {}\tValid: {}\tTest:{}\tOOD: {}".format(len(train_inds), len(valid_inds), len(test_inds), len(ood_inds)))
-    if set == "test+ood":
-        # default, test in ttv + ood
-        dataset = DataSubset(SingleCellDataset(db), inds=(test_inds + ood_inds))
-    elif set == "ood":
-        dataset = DataSubset(SingleCellDataset(db), inds=ood_inds)
-    elif set == "test":
-        dataset = DataSubset(SingleCellDataset(db), inds=test_inds)
-    elif set == "train":
-        dataset = DataSubset(SingleCellDataset(db), inds=train_inds)
-    elif set == "valid":
-        dataset = DataSubset(SingleCellDataset(db), inds=valid_inds)
+    if not clf:
+        if set == "test+ood":
+            # default, test in ttv + ood
+            dataset = DataSubset(SingleCellDataset(db), inds=(test_inds + ood_inds))
+        elif set == "ood":
+            dataset = DataSubset(SingleCellDataset(db), inds=ood_inds)
+        elif set == "test":
+            dataset = DataSubset(SingleCellDataset(db), inds=test_inds)
+        elif set == "train":
+            dataset = DataSubset(SingleCellDataset(db), inds=train_inds)
+        elif set == "valid":
+            dataset = DataSubset(SingleCellDataset(db), inds=valid_inds)
+        else:
+            raise ValueError
+        print("{} set retrived for OOD".format(set))
+        return dataset
     else:
-        raise ValueError
-    print("{} set retrived for OOD".format(set))
-    return dataset
+        if set == "test+ood":
+            data = db.X[test_inds + ood_inds, :]
+            label = np.array(db.obs["int_label"][test_inds + ood_inds]).astype("int")
+        elif set == "ood":
+            data = db.X[ood_inds, :]
+            label = np.array(db.obs["int_label"][ood_inds]).astype("int")
+        elif set == "test":
+            data = db.X[test_inds, :]
+            label = np.array(db.obs["int_label"][test_inds]).astype("int")
+        elif set == "train":
+            data = db.X[train_inds, :]
+            label = np.array(db.obs["int_label"][train_inds]).astype("int")
+        elif set == "valid":
+            data = db.X[valid_inds, :]
+            label = np.array(db.obs["int_label"][valid_inds]).astype("int")
+        else:
+            raise ValueError
+        print("{} set retrived for OOD".format(set))
+        return data, label
 
 
 def logp_hist(f, args, device):
@@ -453,6 +475,18 @@ def jem_calib(f, args, device):
     return np.array(conf), np.array(acc)
 
 
+def clf_calib(args):
+    if not os.path.isfile(args.split_dict):
+        raise FileNotFoundError("set split not found.")
+    set_split_dict = utils.pkl_io("r", args.split_dict)
+    db = utils.pkl_io("r", args.dataset)
+    data, label = return_set(db, args.calibset, set_split_dict, True)
+    clf = utils.pkl_io("r", args.clf_path)
+    acc = (clf.predict(data) == label).astype("int")
+    conf = np.max(softmax(clf.decision_function(data), axis=1),axis=1)
+    return np.array(conf), np.array(acc)
+
+
 def calibration(f, args, device):
     def calib_bar(conf_sorted, acc_sorted, num_chunk):
         assert len(conf_sorted) == len(acc_sorted)
@@ -479,21 +513,25 @@ def calibration(f, args, device):
                 ece += i * np.abs(np.average(acc_sorted[cummulate_count:cummulate_count+i])- conf_avg[step])
         return ece / len(acc_sorted)
 
-    def calib_plot(conf_avg, ece, xval, class_drop):
+    def calib_plot(conf_avg, ece, xval, calibmodel, class_drop):
         xval = xval[:len(xval)-1]
         plt.bar(xval, conf_avg, width=1/len(conf_avg), align="edge")
         plt.plot([0,1], [0,1], "r--")
         plt.title("Calibration ECE={}".format(utils.to_percentage(ece)))
-        plt.savefig("./img/calib_ood_{}.pdf".format(class_drop))
+        plt.savefig("./img/calib_{}_ood_{}.pdf".format(calibmodel, class_drop))
         # plt.show()
     
-    conf, acc = jem_calib(f, args, device)
+    if args.calibmodel == "jem":
+        conf, acc = jem_calib(f, args, device)
+    else:
+        conf, acc = clf_calib(args)
+
     idx = np.argsort(conf)
     conf_sorted = conf[idx]
     acc_sorted = acc[idx]
     conf_avg, count, xval = calib_bar(conf_sorted, acc_sorted, args.num_chunk)
     ece = cal_ece(conf_avg, count, acc_sorted)
-    calib_plot(conf_avg, ece, xval, args.class_drop)
+    calib_plot(conf_avg, ece, xval, args.calibmodel, args.class_drop)
 
 
 def main(args):
@@ -590,6 +628,8 @@ if __name__ == "__main__":
     parser.add_argument("--num_chunk", type=int, default=20, help="number of chunks in calibration")
     parser.add_argument("--class_drop", type=int, default=-1, help="drop the class for ood detection")
     parser.add_argument("--split_dict", type=str, help="path to split dict")
+    parser.add_argument("--calibmodel", choices=["jem", "clf"], help="use either JEM or clf to plot calibration")
+    parser.add_argument("--clf_path", type=str, help="path to clf if calibmodel=clf") 
 
     args = parser.parse_args()
 

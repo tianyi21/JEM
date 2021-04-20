@@ -43,3 +43,13 @@ python eval_wrn_ebm.py --dataset ~/Desktop/pbmc_filtered.pkl --n_classes 10 --ba
 python eval_wrn_ebm.py --dataset ~/Desktop/pbmc_filtered.pkl --n_classes 10 --backbone mlp --arch 500 200 --rset train --fset test ood --split_dict ./experiment/set_split_idx_ood_1.pkl --load_path PATH_TO_best_valid_ckpt_ood_[0-10].pt
 """
 python eval_wrn_ebm2.py --dataset ./data/pbmc_filtered.pkl --n_classes 10 --backbone resnet --arch 800 200 --rset train --fset test ood --split_dict models/res-d0/experiment/set_split_idx_ood_0.pkl --load_path ./models/res-d0/experiment/best_valid_ckpt_ood_0.pt --num_block 2 4
+
+## calibration example
+## with JEM
+## calibmodel:                  jem: default
+python eval_wrn_ebm.py --dataset ~/Desktop/pbmc_filtered.pkl --n_classes 10 --backbone resnet --arch 800 200 --num_block 2 4 --calibset train --load_path ~/Desktop/best_valid_ckpt_ood_0.pt --split_dict ~/Desktop/set_split_idx_ood_0.pkl --eval calib --class_drop 0 --calibmodel jem
+
+## with other classifier
+## calibmodel:                  pickled LinearSVC()
+## clf_path:                    path to calibmodel
+python eval_wrn_ebm.py --dataset ~/Desktop/pbmc_filtered.pkl --n_classes 10  --calibset train --split_dict ~/Desktop/set_split_idx_ood_0.pkl --eval calib --class_drop 0 --calibmodel clf --clf_path ~/Desktop/svm_0.pkl
