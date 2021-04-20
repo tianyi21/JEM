@@ -114,7 +114,7 @@ def init_random(bs):
     return t.FloatTensor(bs, n_gene).uniform_(-1, 1)
 
 
-def sample_p_0(device, replay_buffer, bs, y=None):
+def sample_p_0(device, replay_buffer, bs, n_classes, y=None):
     if len(replay_buffer) == 0:
         return init_random(bs), []
     buffer_size = len(replay_buffer) if y is None else len(replay_buffer) // n_classes
@@ -138,7 +138,7 @@ def sample_q(args, device, f, replay_buffer, y=None):
     # get batch size
     bs = args.batch_size if y is None else y.size(0)
     # generate initial samples and buffer inds of those samples (if buffer is used)
-    init_sample, buffer_inds = sample_p_0(device, replay_buffer, bs=bs, y=y)
+    init_sample, buffer_inds = sample_p_0(device, replay_buffer, bs=bs, y=y, n_classes=args.n_classes)
     x_k = t.autograd.Variable(init_sample, requires_grad=True)
     # sgld
     for k in range(args.n_steps):
@@ -300,20 +300,30 @@ def logp_hist(f, args, device):
     # for name, scores in score_dict.items():
     plt.hist(scores.cpu().numpy(), label=args.logpset, bins=100, density=True, alpha=.5)
     plt.legend()
-    plt.savefig("./img/logp_hist.pdf")
+    plt.savefig(f"{args.save_dir}/logp_hist.pdf")
 
 
 def OODAUC(f, args, device):
     sns.set()
     sns.set_context('talk')
-    def score_fn(x, score_type='px'):
-        permitted_score_types = ["px", "py", "pxgrad", "pxy", "pxygrad"]
+    if 'svm_cal' in args.score_fn:
+        svm_cal = utils.pkl_io("r", f"{args.svm_cal_path}/svm_cal-d{args.class_drop}"
+                                    f"/svm_cal_{args.class_drop}.pkl")
+
+    def score_fn(x, score_type='px', dataset=None):
+        """
+        dataset - the full dataset numpy to be used for svm_cal prediction
+        """
+        permitted_score_types = ["px", "py", "pxgrad", "pxy", "pxygrad", 'svm_cal']
         assert score_type in permitted_score_types, f"score function needs to be in {permitted_score_types}"
         # pdb.set_trace()
-        if score_type == "px":
-            return - f(x).detach().cpu()
+        if score_type == 'svm_cal':
+            assert np.any(dataset)
+            return svm_cal.predict_proba(dataset).max(1)
+        elif score_type == "px":
+            return f(x).detach().cpu()
         elif score_type == "py":
-            return - nn.Softmax()(f.classify(x)).max(1)[0].detach().cpu()
+            return nn.Softmax()(f.classify(x)).max(1)[0].detach().cpu()
         elif score_type == 'pxgrad':
             return -grad_norm(x).detach().cpu()
         elif score_type == 'pxy':
@@ -324,7 +334,7 @@ def OODAUC(f, args, device):
             raise ValueError
 
     def pxy(x):
-        py = - nn.Softmax()(f.classify(x)).max(1)[0]
+        py = nn.Softmax()(f.classify(x)).max(1)[0]
         px = f(x)
         return px * py
 
@@ -349,6 +359,10 @@ def OODAUC(f, args, device):
     all_scores = dict()
     for score_type in args.score_fn:
         real_scores = []
+        if score_type == 'svm_cal':
+            dataset_vals = return_set(db, args.rset, set_split_dict, clf=True)[0]
+            all_scores[args.rset + '_' + score_type] = score_fn(None, 'svm_cal', dataset_vals)
+            continue
         for x, _ in dload_real:
             x = x.to(device)
             scores = score_fn(x, score_type=score_type)
@@ -364,6 +378,12 @@ def OODAUC(f, args, device):
         dload_fake = DataLoader(dset_fake, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=False)
         print("Calculating fake scores for {}\n".format(ds))
         for score_type in args.score_fn:
+
+            if score_type == 'svm_cal':
+                dataset_vals = return_set(db, args.rset, set_split_dict, clf=True)[0]
+                all_scores[ds + '_' + score_type] = score_fn(None, 'svm_cal', dataset_vals)
+                continue
+
             fake_scores = []
             for x, _ in dload_fake:
                 x = x.to(device)
@@ -387,17 +407,9 @@ def OODAUC(f, args, device):
             plt.hist(all_scores[dataset + '_' + score_type],
                      density=True, label=dataset, bins=100, alpha=.5, fill='black', lw=0)
         plt.legend()
-        # if score_type == "px":
-        #     plt.xlim(0, 20)
-        # elif score_type == "pxgrad":
-        #     plt.xlim(-5, 0)
-        # elif score_type == "pxy":
-        #     plt.xlim(0, 20)
-        # elif score_type == "py":
-        #     plt.xlim(0.7, 1)
 
         plt.title(f"Histogram of OOD detection {score_type}")
-        plt.savefig(f"./img/OOD_hist_{score_type}.pdf")
+        plt.savefig(f"{args.save_dir}/OOD_hist_{score_type}.pdf")
         plt.close()
     # for every fake dataset make an ROC plot
     for dataset_name in args.fset:
@@ -416,6 +428,10 @@ def OODAUC(f, args, device):
             fpr, tpr, thresholds = sklearn.metrics.roc_curve(labels, scores)
             auc_value = sklearn.metrics.auc(fpr, tpr)
             plt.step(fpr, tpr, where='post', label=f'{score_type} AUC: {round(auc_value, 3)}')
+            with open(f'./ood_roc_auc_values.csv', 'a') as fout:
+                fout.write(
+                    f"{dataset_name},{args.rset},{args.backbone},{args.class_drop},"
+                    f"{score_type},{round(auc_value, 3)}\n")
         plt.xlabel('FPR')
         plt.ylabel('TPR')
         plt.ylim([0.0, 1.01])
@@ -423,7 +439,7 @@ def OODAUC(f, args, device):
         plt.title(f"Reciever Operating Characteristic (ROC)\n Plot OOD detection {dataset_name}")
         plt.legend()
         plt.tight_layout()
-        plt.savefig(f"./img/OOD_roc_{dataset_name}.pdf")
+        plt.savefig(f"{args.save_dir}/OOD_roc_{dataset_name}.pdf")
         plt.close()
 
 
@@ -530,7 +546,7 @@ def calibration(f, args, device):
         plt.title("Calibration ECE={}".format(utils.to_percentage(ece)))
         plt.xlabel("Confidence")
         plt.ylabel("Accuracy")
-        plt.savefig("./img/calib_{}_ood_{}.pdf".format(calibmodel, class_drop))
+        plt.savefig(f"{args.save_dir}/calib_{calibmodel}_ood_{class_drop}.pdf")
         # plt.show()
     
     if args.calibmodel == "jem":
@@ -641,6 +657,7 @@ if __name__ == "__main__":
     parser.add_argument("--class_drop", type=int, default=-1, help="drop the class for ood detection")
     parser.add_argument("--split_dict", type=str, help="path to split dict")
     parser.add_argument("--calibmodel", choices=["jem", "clf"], help="use either JEM or clf to plot calibration")
+    parser.add_argument("--svm_cal_path", help="path to calibrated SVM models", type=str, default=None)
     parser.add_argument("--clf_path", type=str, help="path to clf if calibmodel=clf") 
 
     args = parser.parse_args()
