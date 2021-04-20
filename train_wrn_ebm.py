@@ -165,7 +165,7 @@ def get_model_and_buffer(args, device, sample_q):
 
 def get_data(args):
     def _drop_class(db, n_classes, class_drop):
-        if class_drop >= n_classes:
+        if class_drop >= n_classes + 1:
             raise ValueError("Invalid class index provided")
         if class_drop != -1:
             assert (n_classes + 1) == len(np.unique(db.obs["int_label"]))
