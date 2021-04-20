@@ -16,7 +16,6 @@
 import utils
 import torch as t, torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
-import torchvision as tv, torchvision.transforms as tr
 import os
 import sys
 import argparse
@@ -81,10 +80,12 @@ class F(nn.Module):
         self.class_output = nn.Linear(self.f.last_dim, n_classes)
 
     def forward(self, x, y=None):
+        # forward is just a linear layer to single value
         penult_z = self.f(x)
         return self.energy_output(penult_z).squeeze()
 
     def classify(self, x):
+        # This is just an output with n classes
         penult_z = self.f(x)
         return self.class_output(penult_z).squeeze()
 
@@ -280,14 +281,23 @@ def logp_hist(f, args, device):
 
 
 def OODAUC(f, args, device):
-    def score_fn(x):
-        if args.score_fn == "px":
+    sns.set()
+    sns.set_context('talk')
+    def score_fn(x, score_type='px'):
+        permitted_score_types = ["px", "py", "pxgrad", "pxy"]
+        assert score_type in permitted_score_types, f"score function needs to be in {permitted_score_types}"
+        if score_type == "px":
             return f(x).detach().cpu()
-        elif args.score_fn == "py":
+        elif score_type == "py":
             return nn.Softmax()(f.classify(x)).max(1)[0].detach().cpu()
-        else:
+        elif score_type == 'pxgrad':
             return -grad_norm(x).detach().cpu()
+        # elif score_type == 'pxy':
+        #     return -grad_norm(x).detach().cpu() * f(x).detach().cpu()
+        else:
+            raise ValueError
 
+    # JEM grad norm function
     def grad_norm(x):
         x_k = t.autograd.Variable(x, requires_grad=True)
         f_prime = t.autograd.grad(f(x_k).sum(), [x_k], retain_graph=True)[0]
@@ -300,41 +310,73 @@ def OODAUC(f, args, device):
         raise FileNotFoundError("set split not found.")
     set_split_dict = utils.pkl_io("r", args.split_dict)
     db = utils.pkl_io("r", args.dataset)
-
+    # load dataset specified by rset
     dset_real = return_set(db, args.rset, set_split_dict)
     dload_real = DataLoader(dset_real, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=False)
 
     print("Calculating real scores\n")
-    real_scores = []
+    predicted_vals = []
     for x, _ in dload_real:
         x = x.to(device)
-        scores = score_fn(x)
-        real_scores.extend(scores.numpy())
-        # print(scores.mean())
+        predicted_vals.extend(x)
 
-    real_labels = np.ones_like(real_scores)
-    plt.hist(real_scores, density=True, label=args.rset, bins=100, alpha=.5)
+    all_scores = dict()
+    for score_type in args.score_fn:
+        scores = score_fn(predicted_vals, score_type=score_type)
+        # save the scores with the rset value as key
+        all_scores[args.rset + "_" + score_type] = scores
 
+    # we are differentiating vs these scores
     for ds in args.fset:
+        # load fake dataset
         dset_fake = return_set(db, ds, set_split_dict)
         dload_fake = DataLoader(dset_fake, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=False)
         print("Calculating fake scores for {}\n".format(ds))
-        fake_scores = []
+
+        predicted_vals = []
         for x, _ in dload_fake:
             x = x.to(device)
-            scores = score_fn(x)
-            fake_scores.extend(scores.numpy())
-            # print(scores.mean())
-        plt.hist(fake_scores, density=True, label=ds, bins=100, alpha=.5)
-    
-        fake_labels = np.zeros_like(fake_scores)
-        labels = np.concatenate([real_labels, fake_labels])
-        scores = np.concatenate([real_scores, fake_scores])
-        score = sklearn.metrics.roc_auc_score(labels, scores)
-        print("ROC Score of {} & {}: {}\n".format(args.rset, ds, score))
+            predicted_vals.extend(x)
 
-    plt.legend()
-    plt.savefig("./img/OOD_hist.pdf")
+        for score_type in args.score_fn:
+            scores = score_fn(predicted_vals, score_type=score_type)
+            # print(scores.mean())
+            all_scores[ds + '_' + score_type] = scores
+            # Create a histogram for fake scores
+
+    # plot histogram
+    # these are the real scores
+    for score_type in args.score_fn:
+        # Plot the rset dataset
+        plt.hist(all_scores[args.rset + '_' + score_type], density=True, label=args.rset, bins=100, alpha=.5)
+
+        for dataset in args.fset:
+            # plot the datasets in fset
+            plt.hist(all_scores[dataset + '_' + score_type], density=True, label=dataset, bins=100, alpha=.5)
+        plt.legend()
+        plt.savefig(f"./img/OOD_hist_{score_type}.pdf")
+
+    # for every fake dataset make an ROC plot
+    for score_type in args.score_fn:
+        real_labels = np.ones_like(all_scores[args.rset + "_" + score_type])
+        for dataset_name in args.fset:
+            fake_labels = np.zeros_like(all_scores[dataset_name + "_" + score_type])
+            labels = np.concatenate([real_labels, fake_labels])
+            scores = np.concatenate([
+                all_scores[args.rset + "_" + score_type],
+                all_scores[dataset_name + '_' + score_type]
+            ])
+            fpr, tpr, thresholds = sklearn.metrics.roc_curve(labels, scores)
+            auc_value = sklearn.metrics.auc(fpr, tpr)
+            plt.step(fpr, tpr, where='post', label=f'{dataset_name} AUC: {round(auc_value, 3)}')
+        plt.xlabel('FPR')
+        plt.ylabel('TPR')
+        plt.ylim([0.0, 1.01])
+        plt.xlim([0.0, 1.01])
+        plt.title(f"Reciever Operating Characteristic (ROC)\n Plot OOD detection {score_type}")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(f"./img/OOD_roc_{score_type}.pdf")
 
 
 def test_clf(f, args, device):
@@ -417,8 +459,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser("Energy Based Models and Shit")
     parser.add_argument("--eval", default="OOD", type=str,
                         choices=["uncond_samples", "cond_samples", "logp_hist", "OOD", "test_clf"])
-    parser.add_argument("--score_fn", default="px", type=str,
-                        choices=["px", "py", "pxgrad"], help="For OODAUC, chooses what score function we use.")
+    parser.add_argument("--score_fn", default=["px", "py", "pxgrad"], type=str, nargs="+",
+                        help="For OODAUC, chooses what score function we use.")
     parser.add_argument("--dataset", type=str) # path to anndata
 
     # optimization

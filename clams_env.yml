@@ -1,0 +1,21 @@
+name: clams
+channels:
+- pytorch
+- defaults
+- bioconda
+- fastai
+- conda-forge
+dependencies:
+  - python
+  - numpy
+  - pandas
+  - seaborn
+  - pytorch
+  - scikit-learn
+  - tqdm
+  - pip
+  - ipykernel
+  - pip:
+    - anndata
+    - nbconvert
+    - wandb
