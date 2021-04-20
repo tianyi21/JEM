@@ -40,3 +40,4 @@ python eval_wrn_ebm.py --dataset ~/Desktop/pbmc_filtered.pkl --n_classes 11 --ba
 ## ood example
 ## default --eval is ood, default --rset is train, default --fset is test+ood
 python eval_wrn_ebm.py --dataset ~/Desktop/pbmc_filtered.pkl --n_classes 11 --backbone mlp --arch 500 200 --rset train --fset test ood --split_dict ./experiment/set_split_idx_ood_1.pkl --load_path PATH_TO_best_valid_ckpt_ood_[0-10].pt
+

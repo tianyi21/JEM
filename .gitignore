@@ -2,3 +2,6 @@
 __pycache__
 experiment/
 img/
+set_split/
+data/
+.vscode/
