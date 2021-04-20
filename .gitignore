@@ -5,3 +5,5 @@ img/
 set_split/
 data/
 .vscode/
+.idea/
+models/

@@ -286,14 +286,15 @@ def OODAUC(f, args, device):
     def score_fn(x, score_type='px'):
         permitted_score_types = ["px", "py", "pxgrad", "pxy"]
         assert score_type in permitted_score_types, f"score function needs to be in {permitted_score_types}"
+        # pdb.set_trace()
         if score_type == "px":
-            return f(x).detach().cpu()
+            return - f(x).detach().cpu()
         elif score_type == "py":
-            return nn.Softmax()(f.classify(x)).max(1)[0].detach().cpu()
+            return - nn.Softmax()(f.classify(x)).max(1)[0].detach().cpu()
         elif score_type == 'pxgrad':
             return -grad_norm(x).detach().cpu()
-        # elif score_type == 'pxy':
-        #     return -grad_norm(x).detach().cpu() * f(x).detach().cpu()
+        elif score_type == 'pxy':
+            return - nn.Softmax()(f.classify(x)).max(1)[0].detach().cpu() * f(x).detach().cpu()
         else:
             raise ValueError
 
@@ -346,16 +347,32 @@ def OODAUC(f, args, device):
     # these are the real scores
     for score_type in args.score_fn:
         # Plot the rset dataset
-        plt.hist(all_scores[args.rset + '_' + score_type], density=True, label=args.rset, bins=100, alpha=.5)
+        plt.figure(figsize=(10, 10))
+
+        plt.hist(all_scores[args.rset + '_' + score_type],
+                 density=True, label=args.rset, bins=100, alpha=.8, fill='black', lw=0)
 
         for dataset in args.fset:
             # plot the datasets in fset
-            plt.hist(all_scores[dataset + '_' + score_type], density=True, label=dataset, bins=100, alpha=.5)
+            plt.hist(all_scores[dataset + '_' + score_type],
+                     density=True, label=dataset, bins=100, alpha=.5, fill='black', lw=0)
         plt.legend()
-        plt.savefig(f"./img/OOD_hist_{score_type}.pdf")
+        if score_type == "px":
+            plt.xlim(0, 20)
+        elif score_type == "pxgrad":
+            plt.xlim(-5, 0)
+        elif score_type == "pxy":
+            plt.xlim(0, 20)
+        elif score_type == "py":
+            plt.xlim(0.7, 1)
 
+        plt.title(f"Histogram of OOD detection {score_type}")
+        plt.savefig(f"./img/OOD_hist_{score_type}.pdf")
+        plt.close()
     # for every fake dataset make an ROC plot
     for score_type in args.score_fn:
+        plt.figure(figsize=(10, 10))
+
         real_labels = np.ones_like(all_scores[args.rset + "_" + score_type])
         for dataset_name in args.fset:
             fake_labels = np.zeros_like(all_scores[dataset_name + "_" + score_type])
@@ -375,6 +392,7 @@ def OODAUC(f, args, device):
         plt.legend()
         plt.tight_layout()
         plt.savefig(f"./img/OOD_roc_{score_type}.pdf")
+        plt.close()
 
 
 def test_clf(f, args, device):
@@ -403,7 +421,8 @@ def test_clf(f, args, device):
         py = nn.Softmax()(f.classify(x_p_d)).max(1)[0].detach().cpu().numpy()
         loss = nn.CrossEntropyLoss(reduce=False)(logits, y_p_d).cpu().detach().numpy()
         losses.extend(loss)
-        correct = (logits.max(1)[1] == y_p_d).float().cpu().numpy()
+        correct = (logits
+                   .max(1)[1] == y_p_d).float().cpu().numpy()
         corrects.extend(correct)
         pys.extend(py)
         preds.extend(logits.max(1)[1].cpu().numpy())
@@ -454,10 +473,11 @@ def main(args):
 
 
 if __name__ == "__main__":
+    __spec__ = None
     parser = argparse.ArgumentParser("Energy Based Models and Shit")
     parser.add_argument("--eval", default="OOD", type=str,
                         choices=["uncond_samples", "cond_samples", "logp_hist", "OOD", "test_clf"])
-    parser.add_argument("--score_fn", default=["px", "py", "pxgrad"], type=str, nargs="+",
+    parser.add_argument("--score_fn", default=["px", "py", "pxgrad", "pxy"], type=str, nargs="+",
                         help="For OODAUC, chooses what score function we use.")
     parser.add_argument("--dataset", type=str) # path to anndata
 
