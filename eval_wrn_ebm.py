@@ -27,7 +27,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import sklearn.metrics
 from scipy.special import softmax
-from sklearn.calibration import CalibratedClassifierCV
 
 from tqdm import tqdm
 # Sampling
@@ -202,7 +201,7 @@ def cond_samples(f, replay_buffer, args, device, fresh=False):
 
 def return_set(db, set, set_split_dict, clf=False):
     train_inds, valid_inds, test_inds, ood_inds = set_split_dict.values()
-    print("Split Dict:\tTrain: {}\tValid: {}\tTest:{}\tOOD: {}".format(len(train_inds), len(valid_inds), len(test_inds), len(ood_inds)))
+    print("Split Dict:\tTrain: {}\tValid: {}\tTest: {}\tOOD: {}".format(len(train_inds), len(valid_inds), len(test_inds), len(ood_inds)))
     if not clf:
         if set == "test+ood":
             # default, test in ttv + ood
@@ -261,7 +260,7 @@ def logp_hist(f, args, device):
         if args.score_fn == "px":
             return f(x).detach().cpu()
         elif args.score_fn == "py":
-            return nn.Softmax()(f.classify(x)).max(1)[0].detach().cpu()
+            return nn.Softmax(dim=1)(f.classify(x)).max(1)[0].detach().cpu()
         elif args.score_fn == "pxgrad":
             return -t.log(grad_norm(x).detach().cpu())
         elif args.score_fn == "refine":
@@ -283,8 +282,6 @@ def logp_hist(f, args, device):
         else:
             return f.classify(x).max(1)[0].detach().cpu()
 
-    if not os.path.isfile(args.split_dict):
-        raise FileNotFoundError("set split not found.")
     set_split_dict = utils.pkl_io("r", args.split_dict)
     db = utils.pkl_io("r", args.dataset)
     dataset = return_set(db, args.logpset, set_split_dict)
@@ -304,8 +301,6 @@ def logp_hist(f, args, device):
 
 
 def OODAUC(f, args, device):
-    sns.set()
-    sns.set_context('talk')
     if 'svm_cal' in args.score_fn:
         svm_cal = utils.pkl_io("r", f"{args.svm_cal_path}/svm_cal-d{args.class_drop}"
                                     f"/svm_cal_{args.class_drop}.pkl")
@@ -323,7 +318,7 @@ def OODAUC(f, args, device):
         elif score_type == "px":
             return f(x).detach().cpu()
         elif score_type == "py":
-            return nn.Softmax()(f.classify(x)).max(1)[0].detach().cpu()
+            return nn.Softmax(dim=1)(f.classify(x)).max(1)[0].detach().cpu()
         elif score_type == 'pxgrad':
             return -grad_norm(x).detach().cpu()
         elif score_type == 'pxy':
@@ -334,7 +329,7 @@ def OODAUC(f, args, device):
             raise ValueError
 
     def pxy(x):
-        py = nn.Softmax()(f.classify(x)).max(1)[0]
+        py = nn.Softmax(dim=1)(f.classify(x)).max(1)[0]
         px = f(x)
         return px * py
 
@@ -347,17 +342,16 @@ def OODAUC(f, args, device):
 
     print("OOD Evaluation")
 
-    if not os.path.isfile(args.split_dict):
-        raise FileNotFoundError("set split not found.")
     set_split_dict = utils.pkl_io("r", args.split_dict)
     db = utils.pkl_io("r", args.dataset)
     # load dataset specified by rset
     dset_real = return_set(db, args.rset, set_split_dict)
     dload_real = DataLoader(dset_real, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=False)
 
-    print("Calculating real scores\n")
+    print("Calculating real scores")
     all_scores = dict()
     for score_type in args.score_fn:
+        print("\t{}".format(score_type), end="")
         real_scores = []
         if score_type == 'svm_cal':
             dataset_vals = return_set(db, args.rset, set_split_dict, clf=True)[0]
@@ -370,15 +364,16 @@ def OODAUC(f, args, device):
 
         # save the scores with the rset value as key
         all_scores[args.rset + "_" + score_type] = real_scores
+    print("\n")
 
     # we are differentiating vs these scores
     for ds in args.fset:
         # load fake dataset
         dset_fake = return_set(db, ds, set_split_dict)
         dload_fake = DataLoader(dset_fake, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=False)
-        print("Calculating fake scores for {}\n".format(ds))
+        print("Calculating fake scores for {}".format(ds))
         for score_type in args.score_fn:
-
+            print("\t{}".format(score_type), end="")
             if score_type == 'svm_cal':
                 dataset_vals = return_set(db, ds, set_split_dict, clf=True)[0]
                 all_scores[ds + '_' + score_type] = score_fn(None, 'svm_cal', dataset_vals)
@@ -392,6 +387,7 @@ def OODAUC(f, args, device):
                 # print(scores.mean())
             all_scores[ds + '_' + score_type] = fake_scores
             # Create a histogram for fake scores
+        print("\n")
 
     # plot histogram
     # these are the real scores
@@ -436,7 +432,7 @@ def OODAUC(f, args, device):
         plt.ylabel('TPR')
         plt.ylim([0.0, 1.01])
         plt.xlim([0.0, 1.01])
-        plt.title(f"Reciever Operating Characteristic (ROC)\n Plot OOD detection {dataset_name}")
+        plt.title(f"Receiver Operating Characteristic (ROC)\n Plot OOD detection {dataset_name}")
         plt.legend()
         plt.tight_layout()
         plt.savefig(f"{args.save_dir}/OOD_roc_{dataset_name}.pdf")
@@ -453,8 +449,6 @@ def test_clf(f, args, device):
         final_samples = x_k.detach()
         return final_samples
 
-    if not os.path.isfile(args.split_dict):
-        raise FileNotFoundError("set split not found.")
     set_split_dict = utils.pkl_io("r", args.split_dict)
     db = utils.pkl_io("r", args.dataset)
     dset = return_set(db, args.clfset, set_split_dict)
@@ -482,8 +476,6 @@ def test_clf(f, args, device):
 
 
 def jem_calib(f, args, device):
-    if not os.path.isfile(args.split_dict):
-        raise FileNotFoundError("set split not found.")
     set_split_dict = utils.pkl_io("r", args.split_dict)
     db = utils.pkl_io("r", args.dataset)
     dset = return_set(db, args.calibset, set_split_dict)
@@ -502,14 +494,15 @@ def jem_calib(f, args, device):
 
 
 def clf_calib(args):
-    if not os.path.isfile(args.split_dict):
-        raise FileNotFoundError("set split not found.")
     set_split_dict = utils.pkl_io("r", args.split_dict)
     db = utils.pkl_io("r", args.dataset)
     data, label = return_set(db, args.calibset, set_split_dict, True)
     clf = utils.pkl_io("r", args.clf_path)
     acc = (clf.predict(data) == label).astype("int")
-    conf = np.max(softmax(clf.decision_function(data), axis=1),axis=1)
+    if hasattr(clf, "decision_function"):
+        conf = np.max(softmax(clf.decision_function(data), axis=1),axis=1)
+    else:
+        conf = np.max(clf.predict_proba(data), axis=1)
     return np.array(conf), np.array(acc)
 
 
@@ -537,17 +530,18 @@ def calibration(f, args, device):
                 continue
             else:
                 ece += i * np.abs(np.average(acc_sorted[cummulate_count:cummulate_count+i])- conf_avg[step])
+                print(i)
+                print(np.abs(np.average(acc_sorted[cummulate_count:cummulate_count+i])- conf_avg[step]))
         return ece / len(acc_sorted)
 
-    def calib_plot(conf_avg, ece, xval, calibmodel, class_drop):
+    def calib_plot(conf_avg, ece, xval, calibmodel, set, class_drop):
         xval = xval[:len(xval)-1]
         plt.bar(xval, conf_avg, width=1/len(conf_avg), align="edge")
         plt.plot([0,1], [0,1], "r--")
         plt.title("Calibration ECE={}".format(utils.to_percentage(ece)))
         plt.xlabel("Confidence")
         plt.ylabel("Accuracy")
-        plt.savefig(f"{args.save_dir}/calib_{calibmodel}_ood_{class_drop}.pdf")
-        # plt.show()
+        plt.savefig(f"{args.save_dir}/calib_{calibmodel}_{set}_ood_{class_drop}.pdf")
     
     if args.calibmodel == "jem":
         conf, acc = jem_calib(f, args, device)
@@ -559,7 +553,7 @@ def calibration(f, args, device):
     acc_sorted = acc[idx]
     conf_avg, count, xval = calib_bar(conf_sorted, acc_sorted, args.num_chunk)
     ece = cal_ece(conf_avg, count, acc_sorted)
-    calib_plot(conf_avg, ece, xval, args.calibmodel, args.class_drop)
+    calib_plot(conf_avg, ece, xval, args.calibmodel, args.calibset, args.class_drop)
 
 
 def main(args):
@@ -567,24 +561,27 @@ def main(args):
     if args.print_to_log:
         sys.stdout = open(f'{args.save_dir}/log.txt', 'w')
 
-    t.manual_seed(seed)
-    if t.cuda.is_available():
-        t.cuda.manual_seed_all(seed)
+    f, device = None, None # dummy
 
-    device = t.device('cuda' if t.cuda.is_available() else 'cpu')
+    if args.backbone is not None:
+        t.manual_seed(seed)
+        if t.cuda.is_available():
+            t.cuda.manual_seed_all(seed)
 
-    model_cls = F if args.uncond else CCF
-    f = model_cls(args.backbone, args.arch, args.num_block, args.req_bn, args.act_func, dropout_rate=args.dropout_rate, n_classes=args.n_classes)
-    print(f"loading model from {args.load_path}")
+        device = t.device('cuda' if t.cuda.is_available() else 'cpu')
 
-    # load em up
-    ckpt_dict = t.load(args.load_path)
-    f.load_state_dict(ckpt_dict["model_state_dict"])
-    replay_buffer = ckpt_dict["replay_buffer"]
-    class_drop = ckpt_dict["class_drop"]
-    assert class_drop == args.class_drop
+        model_cls = F if args.uncond else CCF
+        f = model_cls(args.backbone, args.arch, args.num_block, args.req_bn, args.act_func, dropout_rate=args.dropout_rate, n_classes=args.n_classes)
+        print(f"loading model from {args.load_path}")
 
-    f = f.to(device)
+        # load em up
+        ckpt_dict = t.load(args.load_path)
+        f.load_state_dict(ckpt_dict["model_state_dict"])
+        replay_buffer = ckpt_dict["replay_buffer"]
+        class_drop = ckpt_dict["class_drop"]
+        assert class_drop == args.class_drop
+
+        f = f.to(device)
 
     if args.eval == "OOD":
         OODAUC(f, args, device)
@@ -633,7 +630,7 @@ if __name__ == "__main__":
     parser.add_argument("--save_dir", type=str, default='./img')
     parser.add_argument("--print_every", type=int, default=100)
     parser.add_argument("--n_sample_steps", type=int, default=100)
-    parser.add_argument("--load_path", type=str, default="./experiment/best_valid_ckpt.pt")
+    parser.add_argument("--load_path", type=str)
     parser.add_argument("--print_to_log", action="store_true")
     parser.add_argument("--fresh_samples", action="store_true",
                         help="If set, then we generate a new replay buffer from scratch for conditional sampling,"
@@ -641,7 +638,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--n_classes", type=int, default=11)
 
-    parser.add_argument("--backbone", choices=["resnet", "mlp"], required=True)
+    parser.add_argument("--backbone", choices=["resnet", "mlp"], default=None)
     parser.add_argument("--arch", nargs="+", type=int, help="dimension of each layer")
     parser.add_argument("--num_block", nargs="+", type=int, default=None, help="For resnet backbone only: number of block per layer")
     parser.add_argument("--req_bn", action="store_true", help="If set, uses BatchNorm in CLAMSNet")
@@ -656,7 +653,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_chunk", type=int, default=20, help="number of chunks in calibration")
     parser.add_argument("--class_drop", type=int, default=-1, help="drop the class for ood detection")
     parser.add_argument("--split_dict", type=str, help="path to split dict")
-    parser.add_argument("--calibmodel", choices=["jem", "clf"], help="use either JEM or clf to plot calibration")
+    parser.add_argument("--calibmodel", choices=["jem", "svm", "svm_calib"], help="use either JEM or svm to plot calibration")
     parser.add_argument("--svm_cal_path", help="path to calibrated SVM models", type=str, default=None)
     parser.add_argument("--clf_path", type=str, help="path to clf if calibmodel=clf") 
 
@@ -665,6 +662,8 @@ if __name__ == "__main__":
     print(time.ctime())
     for item in args.__dict__:
         print("{:24}".format(item), "->\t", args.__dict__[item])
-    
+
+    sns.set()
+    sns.set_context('talk')
     main(args)
 
