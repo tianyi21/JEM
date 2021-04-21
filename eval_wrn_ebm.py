@@ -499,10 +499,7 @@ def clf_calib(args):
     data, label = return_set(db, args.calibset, set_split_dict, True)
     clf = utils.pkl_io("r", args.clf_path)
     acc = (clf.predict(data) == label).astype("int")
-    if hasattr(clf, "decision_function"):
-        conf = np.max(softmax(clf.decision_function(data), axis=1),axis=1)
-    else:
-        conf = np.max(clf.predict_proba(data), axis=1)
+    conf = np.max(clf.predict_proba(data), axis=1)
     return np.array(conf), np.array(acc)
 
 
