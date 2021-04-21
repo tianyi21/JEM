@@ -380,7 +380,7 @@ def OODAUC(f, args, device):
         for score_type in args.score_fn:
 
             if score_type == 'svm_cal':
-                dataset_vals = return_set(db, args.rset, set_split_dict, clf=True)[0]
+                dataset_vals = return_set(db, ds, set_split_dict, clf=True)[0]
                 all_scores[ds + '_' + score_type] = score_fn(None, 'svm_cal', dataset_vals)
                 continue
 
