@@ -14,7 +14,8 @@ if __name__ == "__main__":
 
     parser.add_argument("--dataset", type=str) # path to anndata
     parser.add_argument("--split_dict", type=str, help="path to split dict")
-    parser.add_argument("--pretrain", action="store_true")
+    parser.add_argument("--pretrain", action="store_true", help="set when uncalib available as pkl")
+    parser.add_argument("--precalib", action="store_true", help="set when both uncalib and calib available as pkl")
 
     args = parser.parse_args()
 
@@ -34,25 +35,32 @@ if __name__ == "__main__":
     ood_set = db.X[oo, :]
     ood_lab = np.array(db.obs["int_label"][oo]).astype("int")
     
-    if not args.pretrain:
-        tic = time.time()
-        print("Start training")
-        clf = SVC(kernel="linear",probability=True,max_iter=1000)
-        clf.fit(train_set, train_lab)
-        toc = time.time()
-        print("Train time: {} s".format(toc - tic))
-
-        utils.pkl_io("w", "./svm_" + args.split_dict.split("_")[-1], clf)
-    else:
+    if args.precalib:
+        # both svm and svm_cal avail
         clf = utils.pkl_io("r", "./svm_" + args.split_dict.split("_")[-1])
-
-    tic = time.time()
-    clf_calib = CalibratedClassifierCV(clf, cv='prefit')
-    clf_calib.fit(valid_set, valid_lab)
-    toc = time.time()
-    print("Calibration time: {} s".format(toc - tic))
-
-    utils.pkl_io("w", "./svm_cal_" + args.split_dict.split("_")[-1], clf_calib)
+        clf_cal = utils.pkl_io("r", "./svm_cal_" + args.split_dict.split("_")[-1])
+    else:
+        # svm_cal not avail
+        if args.pretrain:
+            # svm avail
+            clf = utils.pkl_io("r", "./svm_" + args.split_dict.split("_")[-1])
+        else:
+            # svm not avail either, train from scratch
+            tic = time.time()
+            print("Start training")
+            clf = SVC(kernel="linear",probability=True,max_iter=1000)
+            clf.fit(train_set, train_lab)
+            toc = time.time()
+            print("Train time: {} s".format(toc - tic))
+            utils.pkl_io("w", "./svm_" + args.split_dict.split("_")[-1], clf)
+        # calib
+        clf = utils.pkl_io("r", "./svm_" + args.split_dict.split("_")[-1])
+        tic = time.time()
+        clf_calib = CalibratedClassifierCV(clf, cv='prefit')
+        clf_calib.fit(valid_set, valid_lab)
+        toc = time.time()
+        print("Calibration time: {} s".format(toc - tic))
+        utils.pkl_io("w", "./svm_cal_" + args.split_dict.split("_")[-1], clf_calib)
 
     print("Pre-Calibration stats:")
     print("Valid f1-score: {}".format(f1_score(valid_lab, clf.predict(valid_set), average="macro")))
