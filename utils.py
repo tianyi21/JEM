@@ -118,6 +118,8 @@ def pkl_io(mode, path, *args):
             print("O: written to {}".format(path))
             pkl.dump(args[0], f)
     elif mode == "r":
+        if not os.path.isfile(path):
+            raise FileNotFoundError("{} not found".format(path))
         with open(path, "rb") as f:
             print("I: read from {}".format(path))
             return pkl.load(f)
