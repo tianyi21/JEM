@@ -38,7 +38,7 @@ if __name__ == "__main__":
     if args.precalib:
         # both svm and svm_cal avail
         clf = utils.pkl_io("r", "./svm_" + args.split_dict.split("_")[-1])
-        clf_cal = utils.pkl_io("r", "./svm_cal_" + args.split_dict.split("_")[-1])
+        clf_calib = utils.pkl_io("r", "./svm_cal_" + args.split_dict.split("_")[-1])
     else:
         # svm_cal not avail
         if args.pretrain:
