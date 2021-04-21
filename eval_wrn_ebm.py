@@ -508,30 +508,30 @@ def calibration(f, args, device):
         assert len(conf_sorted) == len(acc_sorted)
         count, xval = np.histogram(conf_sorted, range=(0, 1), bins=num_chunk)
         cummulate_count = 0
-        conf_avg = []
+        acc_avg = []
         for i in count:
             if i == 0:
-                conf_avg.append(0)
+                acc_avg.append(0)
             else:
-                conf_avg.append(np.average(acc_sorted[cummulate_count:cummulate_count+i]))
+                acc_avg.append(np.average(acc_sorted[cummulate_count:cummulate_count+i]))
                 cummulate_count += i
-        return conf_avg, count, xval
+        return acc_avg, count, xval
 
-    def cal_ece(conf_avg, count, acc_sorted):
+    def cal_ece(acc_avg, count, conf_sorted):
         cummulate_count = 0
         ece = 0
         for step, i in enumerate(count):
             if i == 0:
                 # sanity check
-                assert conf_avg[step] == 0
+                assert acc_avg[step] == 0
                 continue
             else:
-                ece += i * np.abs(np.average(acc_sorted[cummulate_count:cummulate_count+i])- conf_avg[step])
+                ece += i * np.abs(np.average(conf_sorted[cummulate_count:cummulate_count+i])- acc_avg[step])
         return ece / len(acc_sorted)
 
-    def calib_plot(conf_avg, ece, xval, calibmodel, set, class_drop):
+    def calib_plot(acc_avg, ece, xval, calibmodel, set, class_drop):
         xval = xval[:len(xval)-1]
-        plt.bar(xval, conf_avg, width=1/len(conf_avg), align="edge")
+        plt.bar(xval, acc_avg, width=1/len(acc_avg), align="edge")
         plt.plot([0,1], [0,1], "r--")
         plt.title("Calibration ECE={}".format(utils.to_percentage(ece)))
         plt.xlabel("Confidence")
@@ -546,9 +546,9 @@ def calibration(f, args, device):
     idx = np.argsort(conf)
     conf_sorted = conf[idx]
     acc_sorted = acc[idx]
-    conf_avg, count, xval = calib_bar(conf_sorted, acc_sorted, args.num_chunk)
-    ece = cal_ece(conf_avg, count, acc_sorted)
-    calib_plot(conf_avg, ece, xval, args.calibmodel, args.calibset, args.class_drop)
+    acc_avg, count, xval = calib_bar(conf_sorted, acc_sorted, args.num_chunk)
+    ece = cal_ece(acc_avg, count, conf_sorted)
+    calib_plot(acc_avg, ece, xval, args.calibmodel, args.calibset, args.class_drop)
 
 
 def main(args):
