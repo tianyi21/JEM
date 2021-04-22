@@ -530,8 +530,9 @@ def calibration(f, args, device):
                 assert acc_avg[step] == 0
                 continue
             else:
-                ece += i * np.abs(np.average(conf_sorted[cummulate_count:cummulate_count+i])- acc_avg[step])
-        return ece / len(acc_sorted)
+                ece += i * np.abs(np.average(conf_sorted[cummulate_count:cummulate_count+i]) - acc_avg[step])
+                cummulate_count += i
+        return ece / len(conf_sorted)
 
     def calib_plot(acc_avg, ece, xval, calibmodel, set, class_drop):
         xval = xval[:len(xval)-1]
