@@ -461,7 +461,7 @@ def test_clf(f, args, device):
         if args.n_steps > 0:
             x_p_d = sample(x_p_d)
         logits = f.classify(x_p_d)
-        py = nn.Softmax()(f.classify(x_p_d)).max(1)[0].detach().cpu().numpy()
+        py = nn.Softmax(dim=1)(f.classify(x_p_d)).max(1)[0].detach().cpu().numpy()
         loss = nn.CrossEntropyLoss(reduce=False)(logits, y_p_d).cpu().detach().numpy()
         losses.extend(loss)
         correct = (logits
@@ -473,7 +473,7 @@ def test_clf(f, args, device):
     loss = np.mean(losses)
     correct = np.mean(corrects)
     t.save({"losses": losses, "corrects": corrects, "pys": pys}, os.path.join(args.save_dir, "vals.pt"))
-    print(loss, correct)
+    print("Test Loss {}, Test Acc {}".format(loss, correct))
 
 
 def jem_calib(f, args, device):
