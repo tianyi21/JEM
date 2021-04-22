@@ -457,6 +457,7 @@ def test_clf(f, args, device):
     corrects, losses, pys, preds = [], [], [], []
     for x_p_d, y_p_d in tqdm(dload):
         x_p_d, y_p_d = x_p_d.to(device), y_p_d.to(device)
+        y_p_d = utils.convert_label(args.class_drop, y_p_d, mode="r2t")
         if args.n_steps > 0:
             x_p_d = sample(x_p_d)
         logits = f.classify(x_p_d)
@@ -549,6 +550,8 @@ def calibration(f, args, device):
     acc_sorted = acc[idx]
     acc_avg, count, xval = calib_bar(conf_sorted, acc_sorted, args.num_chunk)
     ece = cal_ece(acc_avg, count, conf_sorted)
+    path = "./{}.pkl".format(args.calibmodel) if args.calibmodel != "jem" else "./{}.pkl".format(args.backbone)
+    utils.pkl_io("w", path, {"acc_avg": acc_avg, "count": count, "xval": xval, "ece": ece})
     calib_plot(acc_avg, ece, xval, args.calibmodel, args.calibset, args.class_drop)
 
 
