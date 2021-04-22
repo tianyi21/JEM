@@ -48,7 +48,7 @@ if __name__ == "__main__":
             # svm not avail either, train from scratch
             tic = time.time()
             print("Start training")
-            clf = SVC(kernel="linear",probability=True,max_iter=1000)
+            clf = LinearSVC()
             clf.fit(train_set, train_lab)
             toc = time.time()
             print("Train time: {} s".format(toc - tic))
