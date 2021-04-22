@@ -531,12 +531,12 @@ def calibration(f, args, device):
 
     def calib_plot(acc_avg, ece, xval, calibmodel, set, class_drop):
         xval = xval[:len(xval)-1]
-        plt.tight_layout()
         plt.bar(xval, acc_avg, width=1/len(acc_avg), align="edge")
         plt.plot([0,1], [0,1], "r--")
         plt.title("Calibration ECE={}".format(utils.to_percentage(ece)))
         plt.xlabel("Confidence")
         plt.ylabel("Accuracy")
+        plt.tight_layout()
         plt.savefig(f"{args.save_dir}/calib_{calibmodel}_{set}_ood_{class_drop}.pdf")
     
     if args.calibmodel == "jem":
