@@ -27,6 +27,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import sklearn.metrics
 from scipy.special import softmax
+from sklearn.metrics import f1_score
 
 from tqdm import tqdm
 # Sampling
@@ -454,7 +455,7 @@ def test_clf(f, args, device):
     dset = return_set(db, args.clfset, set_split_dict)
     dload = DataLoader(dset, batch_size=args.batch_size, shuffle=False, num_workers=4, drop_last=False)
 
-    corrects, losses, pys, preds = [], [], [], []
+    corrects, losses, pys, preds, labs = [], [], [], [], []
     for x_p_d, y_p_d in tqdm(dload):
         x_p_d, y_p_d = x_p_d.to(device), y_p_d.to(device)
         y_p_d = utils.convert_label(args.class_drop, y_p_d, mode="r2t")
@@ -469,11 +470,13 @@ def test_clf(f, args, device):
         corrects.extend(correct)
         pys.extend(py)
         preds.extend(logits.max(1)[1].cpu().numpy())
+        labs.extend(y_p_d.cpu().numpy())
 
     loss = np.mean(losses)
     correct = np.mean(corrects)
+
     t.save({"losses": losses, "corrects": corrects, "pys": pys}, os.path.join(args.save_dir, "vals.pt"))
-    print("Test Loss {}, Test Acc {}".format(loss, correct))
+    print("Loss {}, Acc {}, F1 score {}".format(loss, correct, f1_score(labs, preds)))
 
 
 def jem_calib(f, args, device):
