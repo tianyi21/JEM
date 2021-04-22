@@ -217,7 +217,7 @@ def return_set(db, set, set_split_dict, clf=False):
             dataset = DataSubset(SingleCellDataset(db), inds=valid_inds)
         else:
             raise ValueError
-        print("{} set retrived for OOD".format(set))
+        print("{} set retrived for evaluation".format(set))
         return dataset
     else:
         if set == "test+ood":
@@ -237,7 +237,7 @@ def return_set(db, set, set_split_dict, clf=False):
             label = np.array(db.obs["int_label"][valid_inds]).astype("int")
         else:
             raise ValueError
-        print("{} set retrived for OOD".format(set))
+        print("{} set retrived for evaluation".format(set))
         return data, label
 
 
@@ -476,7 +476,7 @@ def test_clf(f, args, device):
     correct = np.mean(corrects)
 
     t.save({"losses": losses, "corrects": corrects, "pys": pys}, os.path.join(args.save_dir, "vals.pt"))
-    print("Loss {}, Acc {}, F1 score {}".format(loss, correct, f1_score(labs, preds)))
+    print("Loss {}, Acc {}, F1 score {}".format(loss, correct, f1_score(labs, preds, average="macro")))
 
 
 def jem_calib(f, args, device):
