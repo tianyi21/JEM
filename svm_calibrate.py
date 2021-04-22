@@ -54,7 +54,6 @@ if __name__ == "__main__":
             print("Train time: {} s".format(toc - tic))
             utils.pkl_io("w", "./svm_" + args.split_dict.split("_")[-1], clf)
         # calib
-        clf = utils.pkl_io("r", "./svm_" + args.split_dict.split("_")[-1])
         tic = time.time()
         clf_calib = CalibratedClassifierCV(clf, cv='prefit')
         clf_calib.fit(valid_set, valid_lab)
