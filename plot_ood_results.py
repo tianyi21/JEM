@@ -14,10 +14,11 @@ for backbone in ['resnet', 'mlp']:
     plt.plot([-2, 7], [0.5, 0.5], 'k-.', lw=1)
 
     ttest_res = ttest_ind(
-        df[(df['backbone'] == backbone) & (df['score_fn'] == 'pxgrad')]['roc_auc'].values,
-        df[(df['backbone'] == backbone) & (df['score_fn'] == 'svm_cal')]['roc_auc'].values,)
+        df[(df['backbone'] == backbone) & (df['score_fn'] == 'px_grad')]['roc_auc'].values,
+        df[(df['backbone'] == backbone) & (df['score_fn'] == 'svm_cal')]['roc_auc'].values,
+    )
     mw_res = mannwhitneyu(
-        df[(df['backbone'] == backbone) & (df['score_fn'] == 'pxgrad')]['roc_auc'].values,
+        df[(df['backbone'] == backbone) & (df['score_fn'] == 'px_grad')]['roc_auc'].values,
         df[(df['backbone'] == backbone) & (df['score_fn'] == 'svm_cal')]['roc_auc'].values,
     )
     print(f'Man Whitney U test {mw_res} of pxgrad vs svm_cal for backbone {backbone}')

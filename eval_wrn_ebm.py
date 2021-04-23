@@ -310,7 +310,7 @@ def OODAUC(f, args, device):
         """
         dataset - the full dataset numpy to be used for svm_cal prediction
         """
-        permitted_score_types = ["px", "py", "pxgrad", "pxy", "pxygrad", 'svm_cal']
+        permitted_score_types = ["px", "py", "px_grad", "pxy", "pxy_grad", "py_grad", 'svm_cal']
         assert score_type in permitted_score_types, f"score function needs to be in {permitted_score_types}"
         # pdb.set_trace()
         if score_type == 'svm_cal':
@@ -320,12 +320,15 @@ def OODAUC(f, args, device):
             return f(x).detach().cpu()
         elif score_type == "py":
             return nn.Softmax(dim=1)(f.classify(x)).max(1)[0].detach().cpu()
-        elif score_type == 'pxgrad':
+        elif score_type == 'px_grad':
             return -grad_norm(x).detach().cpu()
         elif score_type == 'pxy':
             return pxy(x).detach().cpu()
-        elif score_type == 'pxygrad':
-            return -grad_norm(x, fn=pxy).detach().cpu()
+        elif score_type == 'py_grad':
+            return -grad_norm(x, fn=lambda x_val: nn.Softmax(dim=1)(f.classify(x_val)).max(1)[0]).detach().cpu()
+        elif score_type == 'pxy_grad':
+            return -grad_norm(x, fn=f).detach().cpu() - \
+                   grad_norm(x, fn=lambda x_val: nn.Softmax(dim=1)(f.classify(x_val)).max(1)[0]).detach().cpu()
         else:
             raise ValueError
 
@@ -335,7 +338,7 @@ def OODAUC(f, args, device):
         return px * py
 
     # JEM grad norm function
-    def grad_norm(x ,fn=f):
+    def grad_norm(x, fn=f):
         x_k = t.autograd.Variable(x, requires_grad=True)
         f_prime = t.autograd.grad(fn(x_k).sum(), [x_k], retain_graph=True)[0]
         grad = f_prime.view(x.size(0), -1)
@@ -610,10 +613,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser("Energy Based Models and Shit")
     parser.add_argument("--eval", default="OOD", type=str,
                         choices=["uncond_samples", "cond_samples", "logp_hist", "OOD", "test_clf", "calib"])
-    parser.add_argument("--score_fn", default=["px", "py", "pxgrad", "pxy"], type=str, nargs="+",
+    parser.add_argument("--score_fn", default=["px", "py", "px_grad", "pxy", "py_grad", "pxy_grad"],
+                        type=str, nargs="+",
                         help="For OODAUC, chooses what score function we use.")
     parser.add_argument("--dataset", type=str) # path to anndata
-
     # optimization
     parser.add_argument("--batch_size", type=int, default=64)
     # regularization
