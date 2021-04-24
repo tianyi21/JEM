@@ -61,11 +61,12 @@ if __name__ == "__main__":
         print("Calibration time: {} s".format(toc - tic))
         utils.pkl_io("w", "./svm_cal_" + args.split_dict.split("_")[-1], clf_calib)
 
-    print("Pre-Calibration stats:")
-    print("Valid f1-score: {}".format(f1_score(valid_lab, clf.predict(valid_set), average="macro")))
-    print("Valid accuracy: {}".format(clf.score(valid_set, valid_lab)))
-    print("Test f1-score: {}".format(f1_score(test_lab, clf.predict(test_set), average="macro")))
-    print("Test accuracy: {}".format(clf.score(test_set, test_lab)))
+    # pre-calibration stats are deprecated: SVM_reject is a calibrated LinearSVC()
+    # print("Pre-Calibration stats:")
+    # print("Valid f1-score: {}".format(f1_score(valid_lab, clf.predict(valid_set), average="macro")))
+    # print("Valid accuracy: {}".format(clf.score(valid_set, valid_lab)))
+    # print("Test f1-score: {}".format(f1_score(test_lab, clf.predict(test_set), average="macro")))
+    # print("Test accuracy: {}".format(clf.score(test_set, test_lab)))
 
     # Print accuracy and f1-scores on validation and test sets
     print("Calibrated stats:")

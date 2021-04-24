@@ -275,6 +275,7 @@ def eval_classification(f, dload, device, backbone, class_drop, set, epoch=0, cm
 
 def plot_cm(y_p_d, logits, cm_normalize, correct, backbone, class_drop, set="test", epoch=0):
     cm = confusion_matrix(y_p_d, logits, normalize=cm_normalize)
+    plt.figure(figsize=(7,7))
     plt.imshow(cm)
     # sanity check
     batch_label_uniq = sorted(np.unique(y_p_d))
